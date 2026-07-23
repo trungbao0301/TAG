@@ -92,7 +92,7 @@ class Detector:
         """
 
         corners = self.detect_corners(frame)
-        ball = self.detect_ball(frame, show_rectangle=True)
+        ball = self.detect_ball(frame, show_rectangle=True, mask_corner=True)
         return corners, ball  # both in (x,y) conventions
 
     def reset_ball_tracking(self):
@@ -228,7 +228,7 @@ class Detector:
                     cv2.circle(
                         im,
                         tuple(self.corners[corner_ball, :].astype(int)[::-1]),
-                        10,
+                        16,
                         (0, 0, 255),
                         -1,
                     )
@@ -243,14 +243,14 @@ class Detector:
                     cv2.circle(
                         im,
                         tuple(np.round(self.corners[i, :]).astype(int)[::-1]),
-                        10,
+                        16,
                         (0, 0, 255),
                         -1,
                     )
                     cv2.circle(
                         im,
                         tuple(np.round(self.fixed_corners[i, :]).astype(int)[::-1]),
-                        10,
+                        16,
                         (0, 0, 255),
                         -1,
                     )

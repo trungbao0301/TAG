@@ -119,7 +119,7 @@ def detect_gaussian(mask, j, q, th, show_sub, use_contour=True):
                 # predictive 80px crop + locked blue keep false positives away, so
                 # a low floor is safe. circularity floor also relaxed since a
                 # partially-blocked marble is a less-round crescent.
-                if M["m00"] != 0 and circularity > 0.08 and area > 30:
+                if M["m00"] != 0 and circularity > 0.25 and area > 50:
                     cx = M["m10"] / M["m00"]
                     cy = M["m01"] / M["m00"]
                     c = np.array([cy, cx])
