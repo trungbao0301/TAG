@@ -36,7 +36,7 @@ class ImageSubscriber(Node):
         # negative/zero tolerance rejected valid edge marbles as "outside" and
         # published NaN, so the marble looked lost near the top/bottom. Expand
         # the accepted region instead of shrinking it.
-        self.declare_parameter("playable_edge_tolerance", 0.015)
+        self.declare_parameter("playable_edge_tolerance", 0.005)
 
         self.skip = max(1, int(self.get_parameter("process_every_n").value))
         self.pipeline_fps = float(self.get_parameter("pipeline_fps").value)
