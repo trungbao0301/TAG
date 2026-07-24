@@ -28,15 +28,15 @@ class FastCameraPublisher(Node):
         # Locked color controls (tuned via camera_tuner_live.py) applied with
         # v4l2-ctl after the device opens, so the marble's blue is STABLE across
         # every maze position. -999 means "leave the camera default / skip".
-        self.declare_parameter("v4l2_white_balance_automatic", -999)  # -999 = skip (use camera default)
-        self.declare_parameter("v4l2_white_balance_temperature", -999)  # -999 = skip (use camera default)
+        self.declare_parameter("v4l2_white_balance_automatic", 0)
+        self.declare_parameter("v4l2_white_balance_temperature", 4000)
         # 1 = Manual (locks exposure_time_absolute -> stable frame rate). Do NOT
         # use 3 (aperture priority): the camera then auto-picks a long exposure in
         # this lighting (~55ms), which caps the frame rate at ~18fps and starves
         # the RL training of data. Manual 8ms exposure gives ~45fps.
-        self.declare_parameter("v4l2_auto_exposure", -999)  # -999 = skip (use camera default)
-        self.declare_parameter("v4l2_exposure_time_absolute", -999)  # -999 = skip (use camera default)
-        self.declare_parameter("v4l2_saturation", -999)  # -999 = skip (use camera default)
+        self.declare_parameter("v4l2_auto_exposure", 1)
+        self.declare_parameter("v4l2_exposure_time_absolute", 80)
+        self.declare_parameter("v4l2_saturation", 40)
         self.declare_parameter("v4l2_gamma", -999)  # -999 = skip (use camera default)
         self.declare_parameter("v4l2_contrast", -999)  # -999 = skip (use camera default)
         self.declare_parameter("v4l2_brightness", -999)  # -999 = skip (use camera default)
