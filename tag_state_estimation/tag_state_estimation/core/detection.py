@@ -19,9 +19,9 @@ class Detector:
     DEFAULT_TH_CORNERS = 0.002  # gaussian detection threshold
 
     DEFAULT_HSV_BALL = (
-        (79, 111),  # (minHue, maxHue) — blue (locked-WB camera, saturation 40)
-        (106, 255),  # (minSat, maxSat)
-        (0, 242),
+        (60, 116),  # (minHue, maxHue) — blue (locked-WB camera, saturation 40)
+        (162, 255),  # (minSat, maxSat)
+        (0, 243),
     )  # (minVal, maxVal)
     DEFAULT_Q_BALL = 6  # gaussian detection param -> q-th quentile
     DEFAULT_TH_BALL = 10 ** (-4)  # gaussian detection threshold
