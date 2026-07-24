@@ -51,8 +51,8 @@ class ImageSubscriber(Node):
         edge_tolerance = max(
             0.0, float(self.get_parameter("playable_edge_tolerance").value)
         )
-        self.playable_half_x = 0.125
-        self.playable_half_y = 0.116
+        self.playable_half_x = 0.14
+        self.playable_half_y = 0.13
 
         self.acceleration_backend, acceleration_msg = configure_opencv_acceleration(
             self.use_gpu,
