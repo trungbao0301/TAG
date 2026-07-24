@@ -73,23 +73,21 @@ class HybridBallTracker:
             measurement, source, np.nan, self.missing_frames
         )
 
-    def _update_pending_ai(self, ai_position):
+    def _confirm_reacquisition(self, position, source):
         if (
             self.pending_ai_position is not None
-            and self._distance(ai_position, self.pending_ai_position)
+            and self._distance(position, self.pending_ai_position)
             <= self.agreement_radius_px
         ):
             self.pending_ai_frames += 1
             self.pending_ai_position = 0.5 * (
-                self.pending_ai_position + ai_position
+                self.pending_ai_position + position
             )
         else:
-            self.pending_ai_position = ai_position.copy()
+            self.pending_ai_position = position.copy()
             self.pending_ai_frames = 1
         if self.pending_ai_frames >= self.far_reacquire_confirm_frames:
-            return self._accept(
-                self.pending_ai_position, "ai_reacquired_confirmed"
-            )
+            return self._accept(self.pending_ai_position, source)
         return None
 
     def update(self, hsv_position=None, ai_position=None):
@@ -104,6 +102,11 @@ class HybridBallTracker:
             if disagreement <= self.agreement_radius_px:
                 ai_weight = self.ai_fusion_weight
                 fused = (1.0 - ai_weight) * hsv_position + ai_weight * ai_position
+                if self.last_position is None or self.missing_frames > 0:
+                    confirmed = self._confirm_reacquisition(
+                        fused, "fused_reacquired_confirmed"
+                    )
+                    return confirmed if confirmed is not None else self._missing()
                 return self._accept(fused, "fused", disagreement)
 
             # AI is authoritative when the detectors disagree. A nearby AI
@@ -113,7 +116,9 @@ class HybridBallTracker:
                 ai_jump = self._distance(ai_position, self.last_position)
                 if ai_jump <= self.max_reacquire_jump_px:
                     return self._accept(ai_position, "ai_disagreement", disagreement)
-            confirmed = self._update_pending_ai(ai_position)
+            confirmed = self._confirm_reacquisition(
+                ai_position, "ai_reacquired_confirmed"
+            )
             return confirmed if confirmed is not None else self._missing()
 
         if hsv_valid:
@@ -123,14 +128,18 @@ class HybridBallTracker:
 
         if ai_valid:
             ai_position = np.asarray(ai_position, dtype=np.float32)
-            if self.last_position is None:
-                confirmed = self._update_pending_ai(ai_position)
+            if self.last_position is None or self.missing_frames > 0:
+                confirmed = self._confirm_reacquisition(
+                    ai_position, "ai_reacquired_confirmed"
+                )
                 return confirmed if confirmed is not None else self._missing()
             jump = self._distance(ai_position, self.last_position)
             if jump <= self.max_reacquire_jump_px:
                 return self._accept(ai_position, "ai_reacquired")
 
-            confirmed = self._update_pending_ai(ai_position)
+            confirmed = self._confirm_reacquisition(
+                ai_position, "ai_reacquired_confirmed"
+            )
             if confirmed is not None:
                 return confirmed
 
