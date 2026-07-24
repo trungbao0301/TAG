@@ -26,6 +26,9 @@ setup(
             "estimator = tag_state_estimation.tag_state_estimation_node:main",
             "estimator_sub = tag_state_estimation.tag_state_estimation_subimg:main",
             "select_markers = tag_state_estimation.select_markers:main",
+            "ai_labeler = tag_state_estimation.ai_dataset_labeler:main",
+            "ai_train = tag_state_estimation.train_ai_marble:main",
+            "ai_detector = tag_state_estimation.ai_marble_detector_node:main",
         ],
     },
 )
