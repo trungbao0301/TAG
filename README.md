@@ -227,6 +227,22 @@ real-world hours). Also useful: losses and `fps`.
 
 ---
 
+## AI marble detector (optional)
+
+An optional learned detector augments the HSV estimator during pendulum-arm
+occlusion, reflections, holes, blue markers, and off-board false detections. It
+**never controls motors** — it only produces a marble pixel/confidence or assists
+the estimator through guarded fusion + Kalman prediction. Default mode is `off`
+(pure HSV); `shadow` runs diagnostics only; `hybrid` is AI-authoritative.
+
+📄 **See [`tag_state_estimation/AI_MARBLE_DETECTOR.md`](tag_state_estimation/AI_MARBLE_DETECTOR.md)** for
+modes, the stride-4 training command, safe shadow/hybrid/rollback commands, and
+validation caveats. Model: `models/marble_detector.onnx`.
+
+> Do not enable `hybrid` on the robot until shadow-mode acceptance criteria pass.
+
+---
+
 ## Configuration (environment variables)
 
 Tunable knobs are read from `TAG_*` environment variables (see
