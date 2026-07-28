@@ -12,7 +12,7 @@ c_name = ["blue", "green", "red", "yellow"]
 class PlatePoseEstimator:
 
     # constants
-    L_EXT_INT_X = 0.317
+    L_EXT_INT_X = 0.305  # measured outer frame span along x
     L_EXT_INT_Y = 0.274
     C2C_X = 0.269  # moving-marker center spacing along x
     C2C_Y = 0.237  # moving-marker center spacing along y
@@ -22,12 +22,21 @@ class PlatePoseEstimator:
     R_BALL = 0.012 / 2
     edge_width = 7.5e-3  # to check
 
+    # Inset of the four fixed frame dots from the top/bottom of L_EXT_INT_Y.
+    # Solved from markers.csv: the undistorted dots have an x/y span ratio of
+    # 1.6357, so an x span of L_EXT_INT_X + 2r = 313.0 mm implies a y span of
+    # 191.4 mm, i.e. an inset of (274 - 191.4) / 2. The previous 0.05 guess
+    # made the span ratio 1.868, which drove camera_localization() into a wrong
+    # PnP minimum (camera at x=0.015 m instead of 0.151 m) and biased the
+    # resting plate angles by about -10 deg in beta.
+    FIXED_DOT_INSET_Y = 0.0413
+
     MODEL_POINTS_FIXED_CORNERS = np.array(
         [
-            (-r, 0.05, 0),  # Corner 1
-            (L_EXT_INT_X + r, 0.05, 0),  # Corner 2
-            (L_EXT_INT_X + r, L_EXT_INT_Y - 0.05, 0),  # Corner 3
-            (-r, L_EXT_INT_Y - 0.05, 0),  # Corner 4
+            (-r, FIXED_DOT_INSET_Y, 0),  # Corner 1
+            (L_EXT_INT_X + r, FIXED_DOT_INSET_Y, 0),  # Corner 2
+            (L_EXT_INT_X + r, L_EXT_INT_Y - FIXED_DOT_INSET_Y, 0),  # Corner 3
+            (-r, L_EXT_INT_Y - FIXED_DOT_INSET_Y, 0),  # Corner 4
         ],
         dtype=np.float32,
     )

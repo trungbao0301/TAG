@@ -118,9 +118,15 @@ def draw_side_panel(canvas, lines, next_target=None):
 
 
 class OverlayNode(Node):
+    # A state older than this is not shown at all. Without an expiry the overlay
+    # keeps drawing the last received ball forever, so an estimator that stalls,
+    # crashes, or gets restarted looks exactly like a marble sitting still.
+    STALE_AFTER_SEC = 0.25
+
     def __init__(self):
         super().__init__("overlay_map_view_simple")
         self.latest = None
+        self.latest_time = None
 
         # The overlay only needs the newest estimate; dropped display frames are
         # preferable to retransmitting stale states.
@@ -139,6 +145,18 @@ class OverlayNode(Node):
 
     def cb(self, msg):
         self.latest = msg
+        self.latest_time = time.monotonic()
+
+    def is_stale(self):
+        return (
+            self.latest_time is None
+            or (time.monotonic() - self.latest_time) > self.STALE_AFTER_SEC
+        )
+
+    def stale_for(self):
+        if self.latest_time is None:
+            return float("inf")
+        return time.monotonic() - self.latest_time
 
 
 def draw_waypoint_marker(img, px, py, color, number, radius=10, ring_thickness=1):
@@ -319,6 +337,18 @@ def find_next_waypoint(idx, waypoint_path_indices):
     return None
 
 
+def track_path_point(path, point):
+    """Find progress from the current ball position, independent of history."""
+    point = np.asarray(point, dtype=np.float32)
+    idx, closest = path.closest_point(point)
+    if idx < 0:
+        # The precomputed closest-point map deliberately contains invalid cells
+        # near walls and holes. Use the nearest geometric point for display.
+        idx = int(np.argmin(np.linalg.norm(path.points - point, axis=1)))
+        closest = path.points[idx]
+    return idx, closest
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -354,6 +384,8 @@ def main():
     print("Waypoint colors: green=passed, yellow=next target, blue=future.")
     print(f"Overlay display limited to {display_hz:.1f} FPS.")
 
+    tracked_idx = None
+
     while rclpy.ok():
         frame_start = time.monotonic()
 
@@ -364,44 +396,68 @@ def main():
         panel_lines = []
 
         # Defaults if no valid path/ball data yet.
-        current_idx = None
-        next_target = 0 if len(waypoints) > 0 else None
+        current_idx = tracked_idx
+        next_target = (
+            find_next_waypoint(tracked_idx, waypoint_path_indices)
+            if tracked_idx is not None
+            else (0 if len(waypoints) > 0 else None)
+        )
 
         if node.latest is None:
             panel_lines.append("Waiting for state topic...")
+        elif node.is_stale():
+            # Draw nothing rather than a ball frozen at its last position.
+            panel_lines.append("NO DATA")
+            panel_lines.append(f"estimator silent {node.stale_for():.1f}s")
         else:
             s = node.latest
 
-            x = float(s.x_b)
-            y = float(s.y_b)
+            state_x = float(s.x_b)
+            state_y = float(s.y_b)
 
-            if math.isnan(x) or math.isnan(y):
+            if math.isnan(state_x) or math.isnan(state_y):
                 panel_lines.append("BALL NOT DETECTED")
             else:
-                x, y = (np.array([x, y], dtype=np.float32) + OFFSET).astype(float)
-                bx, by = world_to_px(x, y)
+                # StateEstimate uses a board-centered origin. The DXF map and
+                # waypoint path use a lower-left origin. Keep both names so
+                # the status panel does not make the display conversion look
+                # like an estimator/calibration error.
+                map_x, map_y = (
+                    np.array([state_x, state_y], dtype=np.float32) + OFFSET
+                ).astype(float)
+                bx, by = world_to_px(map_x, map_y)
 
                 # Ball marker.
                 cv2.circle(img, (bx, by), 14, (255, 255, 255), -1)
                 cv2.circle(img, (bx, by), 9, COLOR_BALL, -1)
                 cv2.circle(img, (bx, by), 14, (0, 0, 0), 1)
 
-                panel_lines.append(f"ball: x={x:.3f} m, y={y:.3f} m")
+                panel_lines.append(
+                    f"state(center): x={state_x:.3f}, y={state_y:.3f} m"
+                )
+                panel_lines.append(
+                    f"map(lower-left): x={map_x:.3f}, y={map_y:.3f} m"
+                )
                 panel_lines.append(f"alpha={float(s.alpha):.3f}, beta={float(s.beta):.3f}")
 
                 if path is not None:
-                    idx, closest = path.closest_point(np.array([x, y], dtype=np.float32))
-                    current_idx = int(idx)
+                    idx, closest = track_path_point(
+                        path,
+                        np.array([map_x, map_y], dtype=np.float32),
+                    )
 
                     if idx >= 0:
+                        tracked_idx = int(idx)
+                        current_idx = tracked_idx
+
                         cx, cy = world_to_px(float(closest[0]), float(closest[1]))
                         cv2.circle(img, (cx, cy), 6, COLOR_PATH_CLOSEST, -1)
                         cv2.line(img, (bx, by), (cx, cy), COLOR_PATH_CLOSEST, 2)
 
-                        progress = 100.0 * idx / max(1, path.num_points - 1)
+                        progress = 100.0 * tracked_idx / max(1, path.num_points - 1)
                         panel_lines.append(f"path: {progress:.1f}%")
 
-                        next_target = find_next_waypoint(idx, waypoint_path_indices)
+                        next_target = find_next_waypoint(tracked_idx, waypoint_path_indices)
 
                         if next_target is not None:
                             ntx, nty = waypoints[next_target]
@@ -436,7 +492,7 @@ def main():
                             )
 
                             dist_next = float(np.linalg.norm(
-                                np.array([x, y], dtype=np.float32)
+                                np.array([map_x, map_y], dtype=np.float32)
                                 - np.array([float(ntx), float(nty)], dtype=np.float32)
                             ))
                             panel_lines.append(f"target: W{next_target}, {dist_next*1000:.0f} mm")
