@@ -11,9 +11,15 @@ PYTHON_BIN="${TAG_PYTHON:-/home/tbt589/micromamba/envs/cyberrunner_ros/bin/pytho
 cd "$PROJECT_ROOT"
 
 export PYTHONUNBUFFERED=1
-export AMENT_PREFIX_PATH="$PROJECT_ROOT/install/tag_dreamer:$PROJECT_ROOT/install/tag_interfaces"
-export LD_LIBRARY_PATH="$PROJECT_ROOT/install/tag_interfaces/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export PYTHONPATH="$PROJECT_ROOT/build/tag_dreamer:$PROJECT_ROOT/install/tag_dreamer/lib/python3.11/site-packages:$PROJECT_ROOT/install/tag_interfaces/lib/python3.11/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+# Only tag_dreamer is needed: the TCP gym env imports no ROS messages, just
+# ament_index_python to find its share dir. So the server never has to build
+# tag_interfaces (it has no ROS/colcon anyway).
+export AMENT_PREFIX_PATH="$PROJECT_ROOT/install/tag_dreamer"
+# $PROJECT_ROOT/dreamerv3 MUST come first: dreamerv3 is pip-installed editable
+# on this server pointing at the old cyberruner-main checkout, so without this
+# shadow "-m dreamerv3.train --configs tag" loads that copy and fails with an
+# unknown config (it only has a "cyberrunner:" profile).
+export PYTHONPATH="$PROJECT_ROOT/dreamerv3:$PROJECT_ROOT/install/tag_dreamer/lib/python3.11/site-packages${PYTHONPATH:+:$PYTHONPATH}"
 
 export TAG_BALL_LOSS_GRACE_SEC=0
 export TAG_OCCLUSION_GRACE_SEC=0
