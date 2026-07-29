@@ -359,21 +359,66 @@ Three independent calibrations. Only the first is needed routinely.
 \subsection{Markers --- whenever the camera or board moves}
 \label{sec:markers}
 
+This is the one calibration you will repeat. It tells the estimator where the
+eight blue reference dots are, so it can start tracking them.
+
+\paragraph{Before you start.} Two preconditions, both easy to miss:
+\begin{enumerate}[nosep,left=6mm]
+  \item \textbf{The camera must already be running} --- \cmd{select\_markers}
+        subscribes to \topicname{tag\_camera/image} and shows you a live frame. If
+        the window never appears, the camera is not publishing.
+  \item \textbf{Level the plate first.} The tool says so on start-up, and the
+        reason is concrete: your clicks become the tracker's seeds, and it will
+        only acquire dots within roughly 14\,px of them. The moving dots travel
+        about 15\,px across the full tilt range, so seeds captured at a large
+        tilt can fall outside the acquisition window once the plate returns to
+        level.
+\end{enumerate}
+
+\paragraph{Run it.}
 \begin{lstlisting}
 cd ~/CYBER/tag && source install/setup.bash
 ros2 run tag_state_estimation select_markers
+\end{lstlisting}
+
+Click the eight dots in this order --- the on-screen banner reminds you:
+
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+\textbf{Order} & \textbf{Label} & \textbf{Dot} \\
+\midrule
+1--4 & \cmd{F1}--\cmd{F4} & \emph{fixed} outer frame: lower-left, lower-right, upper-right, upper-left \\
+5--8 & \cmd{M1}--\cmd{M4} & \emph{moving} plate: same order \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Keys: \cmd{u} or Backspace to undo the last click, \cmd{r} to restart,
+\cmd{q} or Escape to abort. After the eighth click it saves \file{markers.csv},
+prints the path it wrote to, and waits for a keypress before exiting.
+
+\paragraph{Then rebuild}, so the installed share directory picks up the new file:
+\begin{lstlisting}
 colcon build --packages-select tag_state_estimation --symlink-install
 \end{lstlisting}
 
-Click in this order: the four \emph{fixed} frame dots
-(\cmd{F1}--\cmd{F4}: lower-left, lower-right, upper-right, upper-left), then the
-four \emph{moving} plate dots (\cmd{M1}--\cmd{M4}) in the same order. Use
-\cmd{u}/Backspace to undo, \cmd{r} to restart, \cmd{q}/Escape to quit.
+\paragraph{Two things that look like mistakes but are not.}
+\begin{itemize}[nosep,left=6mm]
+  \item The fixed crosses sit \emph{outside} the moving ones horizontally but
+        \emph{inside} them vertically. That is the real geometry of the two dot
+        rectangles.
+  \item When the estimator starts, the drawn crosses shift a few pixels off where
+        you clicked. That is the tracker snapping onto the true dot centroids ---
+        it is what should happen. Precision clicking is unnecessary.
+\end{itemize}
 
-Clicks only need to be within about 14\,px; the tracker acquires the true
-centroids on its first frame. Note that the fixed crosses sit \emph{outside} the
-moving ones horizontally but \emph{inside} them vertically --- this looks wrong
-and is correct.
+\paragraph{Verify it took.} The estimator logs the marker file it actually loaded,
+\emph{with its modification time}, on start-up. Read that line: if the timestamp
+is not from your run, the file was written somewhere else. That happens because
+\cmd{select\_markers} saves into whichever workspace wins
+\cmd{AMENT\_PREFIX\_PATH}, and \file{install/setup.bash} \emph{appends} to it, so
+a workspace sourced earlier in the shell takes precedence.
 
 \subsection{Camera intrinsics}
 
