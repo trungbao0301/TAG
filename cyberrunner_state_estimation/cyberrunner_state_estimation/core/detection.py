@@ -136,6 +136,7 @@ class Detector:
         self.hybrid_missing_frames = 0
 
         self.corners_missing = True
+        self.corner_found = np.zeros(4, dtype=bool)
 
         self.fixed_corners = None
         self.is_ball_found = False
@@ -228,7 +229,11 @@ class Detector:
         hole_timer_updated = False
         if should_check_ai:
             roi = self._ai_roi_from_corners(frame.shape)
-            self.last_ai_roi = roi if roi is not None else self.ai_detector.valid_roi
+            self.last_ai_roi = (
+                roi
+                if roi is not None
+                else getattr(self.ai_detector, "valid_roi", None)
+            )
             # Mask the blue corner dots: same colour family as the marble, and a
             # rectangle cannot exclude them without also excluding an edge marble.
             dots = None
@@ -240,14 +245,19 @@ class Detector:
                 corners = np.asarray(self.corners, dtype=np.float32)
                 if corners.shape == (4, 2) and np.all(np.isfinite(corners)):
                     dots = corners[:, ::-1]  # (row,col) -> (x_px, y_px)
-            ai_detection = self.ai_detector.detect(
-                frame,
-                valid_roi=roi,
-                exclude_centers_px=dots,
-                exclude_radius_px=(
-                    self.ai_corner_mask_radius_px if dots is not None else 0.0
-                ),
-            )
+            try:
+                ai_detection = self.ai_detector.detect(
+                    frame,
+                    valid_roi=roi,
+                    exclude_centers_px=dots,
+                    exclude_radius_px=(
+                        self.ai_corner_mask_radius_px if dots is not None else 0.0
+                    ),
+                )
+            except TypeError:
+                # Keep small diagnostic/test detector implementations compatible;
+                # the production ONNX detector accepts the frame-local masks.
+                ai_detection = self.ai_detector.detect(frame)
             self.last_ai_confidence = ai_detection.confidence
             if ai_detection.visible:
                 # The classical detector uses [row, column], while the AI
@@ -432,11 +442,14 @@ class Detector:
             ) = self.predictive_cropping_corners(frame)
 
         missing = False
+        found_mask = np.zeros(4, dtype=bool)
         for i, sub_im in enumerate(cropped_corners_imgs):
             corners[i, :], found = self.detect_corner(
                 sub_im, i, subcoords_corners_imgs[i][0]
             )
+            found_mask[i] = bool(found)
             missing = missing or not found
+        self.corner_found = found_mask
         self.corners_missing = missing
 
         self.corners = corners

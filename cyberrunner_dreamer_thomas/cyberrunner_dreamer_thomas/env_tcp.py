@@ -9,7 +9,7 @@ import gym
 import numpy as np
 from ament_index_python.packages import get_package_share_directory
 
-from cyberrunner_dreamer_thomas import cyberrunner_layout
+from cyberrunner_dreamer_thomas import cyberrunner_layout_custom
 from cyberrunner_dreamer_thomas.path import LinearPath
 
 
@@ -24,11 +24,24 @@ def _recv_line(sock):
         data.extend(b)
 
 
+def _parse_checkpoint_ranges(value):
+    ranges = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        parts = item.split("-", 1)
+        start = int(parts[0])
+        end = int(parts[1]) if len(parts) == 2 else start
+        ranges.append((min(start, end), max(start, end)))
+    return ranges
+
+
 class CyberrunnerGym(gym.Env):
     def __init__(
         self,
         repeat=1,
-        layout=cyberrunner_layout.cyberrunner_hard_layout,
+        layout=cyberrunner_layout_custom.cyberrunner_dxf_layout,
         num_rel_path=5,
         num_wait_steps=30,
         reward_on_fail=0.0,
@@ -49,12 +62,17 @@ class CyberrunnerGym(gym.Env):
         self.obs = dict(self.observation_space.sample())
 
         self.num_rel_path = num_rel_path
-        self.norm_max = np.array([10 * np.pi / 180.0, 10 * np.pi / 180.0, 0.276, 0.231])
+        board_size = np.array(
+            [layout["board_width"], layout["board_height"]], dtype=np.float32
+        )
+        self.norm_max = np.array(
+            [10 * np.pi / 180.0, 10 * np.pi / 180.0, *board_size]
+        )
         self.goal_norm_max = np.array(
             [0.0002 * 60 * k for k in range(1, self.num_rel_path + 1) for _ in range(2)]
         )
 
-        self.offset = np.array([0.276, 0.231]) / 2.0
+        self.offset = board_size / 2.0
         self.holes = np.asarray(layout["holes"], dtype=np.float32)
         self.danger_zones = layout.get("danger_zones", [])
         self.danger_lines = layout.get("danger_lines", [])
@@ -70,7 +88,7 @@ class CyberrunnerGym(gym.Env):
         self.ball_hole_index = -1
         self.ball_hole_distance = np.inf
         shared = get_package_share_directory("cyberrunner_dreamer_thomas")
-        self.p = LinearPath.load(os.path.join(shared, "path_0002_hard.pkl"))
+        self.p = LinearPath.load(os.path.join(shared, "path_custom.pkl"))
 
         self.cheat = False
         self.policy_mode = os.environ.get("CYBERRUNNER_POLICY_MODE", "guarded").lower()
@@ -155,6 +173,18 @@ class CyberrunnerGym(gym.Env):
             os.environ.get("CYBERRUNNER_REWARD_ON_CHECKPOINT", "0.03")
         )
         self.reward_on_goal = float(os.environ.get("CYBERRUNNER_REWARD_ON_GOAL", str(reward_on_goal)))
+        self.stuck_window_sec = max(
+            0.0, float(os.environ.get("CYBERRUNNER_STUCK_WINDOW_SEC", "5.0"))
+        )
+        self.stuck_radius_m = max(
+            0.0, float(os.environ.get("CYBERRUNNER_STUCK_RADIUS_M", "0.003"))
+        )
+        self.stuck_penalty = min(
+            0.0, float(os.environ.get("CYBERRUNNER_STUCK_PENALTY", "0.0"))
+        )
+        self.stuck_anchor_pos = None
+        self.stuck_since = None
+        self.stuck_events = 0
         print(
             f"[TCP ENV] rewards: fail={self.reward_on_fail:.3f}, "
             f"hole={self.reward_on_hole:.3f}, "
@@ -164,12 +194,45 @@ class CyberrunnerGym(gym.Env):
             f"goal={self.reward_on_goal:.3f}"
         )
         print(
+            "[TCP ENV] Stuck penalty: "
+            f"window={self.stuck_window_sec:.1f}s, "
+            f"radius={self.stuck_radius_m * 1000.0:.1f}mm, "
+            f"penalty={self.stuck_penalty:.3f} per window"
+        )
+        print(
             f"[TCP ENV] segment_guards={len(self.segment_guards)}, "
             f"danger_zones={len(self.danger_zones)}, "
             f"danger_lines={len(self.danger_lines)}"
         )
 
         self.ball_detected = False
+        self.ball_occluded = False
+        self.ball_missing_since = None
+        self.ball_missing_grace_sec = 0.0
+        self.ball_loss_reported = False
+        self.ball_loss_grace_sec = max(
+            0.0, float(os.environ.get("CYBERRUNNER_BALL_LOSS_GRACE_SEC", "0.35"))
+        )
+        self.occlusion_grace_sec = max(
+            self.ball_loss_grace_sec,
+            float(os.environ.get("CYBERRUNNER_OCCLUSION_GRACE_SEC", "1.50")),
+        )
+        self.occlusion_checkpoint_ranges = _parse_checkpoint_ranges(
+            os.environ.get("CYBERRUNNER_OCCLUSION_CHECKPOINT_RANGES", "")
+        )
+        self.last_valid_obs = None
+        self.last_valid_ball_pos = None
+        self.last_valid_ball_time = None
+        self.ball_velocity = np.zeros(2, dtype=np.float32)
+        self.ball_prediction_max_speed = max(
+            0.0,
+            float(os.environ.get("CYBERRUNNER_BALL_PREDICTION_MAX_SPEED_MPS", "0.15")),
+        )
+        print(
+            f"[TCP ENV] ball_loss_grace={self.ball_loss_grace_sec:.2f}s, "
+            f"occlusion_grace={self.occlusion_grace_sec:.2f}s, "
+            f"occlusion_checkpoint_ranges={self.occlusion_checkpoint_ranges or 'none'}"
+        )
         default_max_angle_vel = "200" if self.legacy_tcp_policy else "180"
         self.max_angle_vel = float(
             os.environ.get("CYBERRUNNER_MAX_ANGLE_VEL", default_max_angle_vel)
@@ -275,6 +338,17 @@ class CyberrunnerGym(gym.Env):
         self.steps = 0
         self.success = False
         self.ball_detected = False
+        self.ball_occluded = False
+        self.ball_missing_since = None
+        self.ball_missing_grace_sec = 0.0
+        self.ball_loss_reported = False
+        self.last_valid_obs = None
+        self.last_valid_ball_pos = None
+        self.last_valid_ball_time = None
+        self.ball_velocity.fill(0.0)
+        self.stuck_anchor_pos = None
+        self.stuck_since = None
+        self.stuck_events = 0
         self.hole_detect_count = 0
         self.ball_in_hole = False
         self.ball_hole_index = -1
@@ -336,14 +410,14 @@ class CyberrunnerGym(gym.Env):
 
     def _obs_from_reply(self, rep):
         if not rep.get("ball", False):
-            self.ball_detected = False
-            states = np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32)
-            image = np.zeros((64, 64, 1), dtype=np.uint8)
-            rel_path = np.zeros((self.num_rel_path * 2,), dtype=np.float32)
-            self.obs = {"states": states, "goal": rel_path, "image": image}
-            return self.obs.copy()
+            return self._obs_for_missing_ball(rep)
 
+        was_occluded = self.ball_occluded
         self.ball_detected = True
+        self.ball_occluded = False
+        self.ball_missing_since = None
+        self.ball_missing_grace_sec = 0.0
+        self.ball_loss_reported = False
 
         states = np.array(
             [
@@ -366,7 +440,91 @@ class CyberrunnerGym(gym.Env):
         image = np.clip(image, 0, 255).astype(np.uint8)
 
         self.obs = {"states": states, "goal": rel_path, "image": image}
-        return self.obs.copy()
+        self._remember_visible_ball(self.obs)
+        if was_occluded:
+            print("[Occlusion]: BALL REACQUIRED")
+        return self._copy_obs(self.obs)
+
+    @staticmethod
+    def _copy_obs(obs):
+        return {key: value.copy() for key, value in obs.items()}
+
+    def _active_ball_loss_grace(self):
+        for start, end in self.occlusion_checkpoint_ranges:
+            if start <= self.next_checkpoint <= end:
+                return self.occlusion_grace_sec
+        return self.ball_loss_grace_sec
+
+    def _remember_visible_ball(self, obs):
+        now = time.monotonic()
+        position = obs["states"][2:4].copy()
+        if self.last_valid_ball_pos is not None and self.last_valid_ball_time is not None:
+            dt = now - self.last_valid_ball_time
+            if dt > 1e-4:
+                velocity = (position - self.last_valid_ball_pos) / dt
+                speed = float(np.linalg.norm(velocity))
+                if speed > self.ball_prediction_max_speed > 0.0:
+                    velocity *= self.ball_prediction_max_speed / speed
+                self.ball_velocity = (
+                    0.6 * self.ball_velocity + 0.4 * velocity
+                ).astype(np.float32)
+        self.last_valid_ball_pos = position
+        self.last_valid_ball_time = now
+        self.last_valid_obs = self._copy_obs(obs)
+
+    def _obs_for_missing_ball(self, rep):
+        now = time.monotonic()
+        if self.ball_missing_since is None:
+            self.ball_missing_since = now
+            self.ball_missing_grace_sec = self._active_ball_loss_grace()
+            print(
+                "[Occlusion]: BALL HIDDEN "
+                f"checkpoint={self.next_checkpoint} "
+                f"grace={self.ball_missing_grace_sec:.2f}s"
+            )
+
+        missing_sec = now - self.ball_missing_since
+        within_grace = (
+            self.last_valid_obs is not None
+            and missing_sec < self.ball_missing_grace_sec
+        )
+        self.ball_occluded = within_grace
+        self.ball_detected = within_grace
+        self.off_path = False
+        self.path_shortcut = False
+        self.path_shortcut_distance = 0.0
+
+        if self.last_valid_obs is None:
+            states = np.zeros(4, dtype=np.float32)
+            image = np.zeros((64, 64, 1), dtype=np.uint8)
+            rel_path = np.zeros((self.num_rel_path * 2,), dtype=np.float32)
+            self.obs = {"states": states, "goal": rel_path, "image": image}
+            return self._copy_obs(self.obs)
+
+        obs = self._copy_obs(self.last_valid_obs)
+
+        # Alpha and beta remain available from the bridge even while x/y are NaN.
+        for index, key in enumerate(("alpha", "beta")):
+            value = float(rep.get(key, obs["states"][index]))
+            if np.isfinite(value):
+                obs["states"][index] = value
+
+        if within_grace and self.last_valid_ball_pos is not None:
+            predicted = (
+                self.last_valid_ball_pos
+                + self.ball_velocity * min(missing_sec, self.ball_missing_grace_sec)
+            )
+            path_idx, path_point = self._closest_point(predicted)
+            if path_idx >= 0:
+                predicted = path_point
+            obs["states"][2:4] = predicted
+            obs["goal"] = self._get_rel_path(predicted).astype(np.float32)
+        elif not self.ball_loss_reported:
+            print(f"[Occlusion]: BALL LOSS CONFIRMED after {missing_sec:.2f}s")
+            self.ball_loss_reported = True
+
+        self.obs = obs
+        return self._copy_obs(self.obs)
 
     def _send_action(self, action):
         vel_1, vel_2 = self._action_to_command(action)
@@ -386,47 +544,12 @@ class CyberrunnerGym(gym.Env):
                 break
             time.sleep(0.01)
 
-        if not rep.get("ball", False):
-            self.ball_detected = False
-            # Never send NaN to Dreamer. NaN observations can make the policy output NaN.
-            states = np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32)
-            image = np.zeros((64, 64, 1), dtype=np.uint8)
-            rel_path = np.zeros((self.num_rel_path * 2,), dtype=np.float32)
-            self.obs = {"states": states, "goal": rel_path, "image": image}
-            return self.obs.copy()
-
-        self.ball_detected = True
-
-        states = np.array(
-            [
-                float(rep["alpha"]),
-                float(rep["beta"]),
-                float(rep["x_b"]),
-                float(rep["y_b"]),
-            ],
-            dtype=np.float32,
-        )
-        states[2:] += self.offset
-        img_bytes = base64.b64decode(rep["image_b64"])
-        image = np.frombuffer(img_bytes, dtype=np.uint8).reshape(64, 64, 1)
-
-        rel_path = self._get_rel_path(states[2:]).astype(np.float32)
-        # Final safety cleanup: block NaN/inf before Dreamer sees it.
-        states = np.nan_to_num(states, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-        rel_path = np.nan_to_num(rel_path, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-        image = np.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0).astype(np.uint8)
-
-        # Final safety cleanup before Dreamer sees observation.
-        states = np.nan_to_num(states, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-        rel_path = np.nan_to_num(rel_path, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-        image = np.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
-        image = np.clip(image, 0, 255).astype(np.uint8)
-
-        self.obs = {"states": states, "goal": rel_path, "image": image}
-        return self.obs.copy()
+        return self._obs_from_reply(rep)
 
     def _get_reward(self, obs):
-        if not self.ball_detected:
+        if self.ball_occluded or not self.ball_detected:
+            self.stuck_anchor_pos = None
+            self.stuck_since = None
             reward = 0.0
         else:
             curr_pos_path, p = self._closest_point(obs["states"][2:4])
@@ -459,7 +582,7 @@ class CyberrunnerGym(gym.Env):
                 self.progress = raw_progress
                 reward = float(raw_progress) * 0.004 / 16.0
                 self.prev_pos_path = curr_pos_path
-                return reward
+                return reward + self._stuck_reward(obs["states"][2:4])
 
             scaled_cheat_threshold = int(self.cheat_threshold * self.cheat_threshold_scale)
             if (not self.cheat) and raw_progress > scaled_cheat_threshold:
@@ -488,9 +611,47 @@ class CyberrunnerGym(gym.Env):
                 + checkpoints_passed * self.reward_on_checkpoint
             )
             self.prev_pos_path = curr_pos_path
+            reward += self._stuck_reward(obs["states"][2:4])
         return reward
 
+    def _stuck_reward(self, ball_pos):
+        """Apply one penalty per stationary window without ending the episode."""
+        if self.stuck_window_sec <= 0.0 or self.stuck_penalty == 0.0:
+            return 0.0
+
+        now = time.monotonic()
+        position = np.asarray(ball_pos, dtype=np.float32)
+        if self.stuck_anchor_pos is None or self.stuck_since is None:
+            self.stuck_anchor_pos = position.copy()
+            self.stuck_since = now
+            return 0.0
+
+        displacement = float(np.linalg.norm(position - self.stuck_anchor_pos))
+        if displacement > self.stuck_radius_m:
+            self.stuck_anchor_pos = position.copy()
+            self.stuck_since = now
+            return 0.0
+
+        stationary_sec = now - self.stuck_since
+        if stationary_sec < self.stuck_window_sec:
+            return 0.0
+
+        self.stuck_events += 1
+        print(
+            "[Penalty]: MARBLE STUCK "
+            f"event={self.stuck_events}, stationary={stationary_sec:.1f}s, "
+            f"movement={displacement * 1000.0:.1f}mm <= "
+            f"{self.stuck_radius_m * 1000.0:.1f}mm, "
+            f"penalty={self.stuck_penalty:.3f}"
+        )
+        self.stuck_anchor_pos = position.copy()
+        self.stuck_since = now
+        return self.stuck_penalty
+
     def _get_done(self, obs):
+        if self.ball_occluded:
+            return False
+
         done = not self.ball_detected
         if done:
             print("[Done]: BALL LOST")

@@ -8,9 +8,12 @@ BH1750 lightSensor;
 float lux = 0;
 int SOLENOID_PIN = 14;
 const float FIRE_LUX_THRESHOLD = 80.0;
+const unsigned long AUTO_RUN_INTERVAL_MS = 60000UL;
 
 
 unsigned long now;
+unsigned long last_run_ms = 0;
+bool auto_run_enabled = false;
 char serial_cmd[16];
 byte serial_cmd_len = 0;
 
@@ -33,6 +36,13 @@ void loop() {
   now = millis();
   delay(40);
   handleSerial();
+  now = millis();
+
+  if (auto_run_enabled && (unsigned long)(now - last_run_ms) >= AUTO_RUN_INTERVAL_MS) {
+    pulseSolenoid();
+    last_run_ms = now;
+    Serial.println("ok auto pulse");
+  }
 
   if (now > 600000) {
     reboot();
@@ -57,16 +67,27 @@ void handleSerial() {
 }
 
 void handleCommand(char *cmd) {
-  if (strcmp(cmd, "run") == 0 || strcmp(cmd, "fire") == 0 || strcmp(cmd, "test") == 0) {
+  if (strcmp(cmd, "run") == 0) {
     pulseSolenoid();
+    auto_run_enabled = true;
+    last_run_ms = millis();
+    Serial.println("ok pulse");
+  } else if (strcmp(cmd, "fire") == 0 || strcmp(cmd, "test") == 0) {
+    pulseSolenoid();
+    if (auto_run_enabled) {
+      last_run_ms = millis();
+    }
     Serial.println("ok pulse");
   } else if (strcmp(cmd, "stop") == 0) {
+    auto_run_enabled = false;
     digitalWrite(SOLENOID_PIN, LOW);
     Serial.println("ok stop");
   } else if (strcmp(cmd, "status") == 0) {
     lux = lightSensor.readLightLevel();
     Serial.print("ok lux=");
-    Serial.println(lux);
+    Serial.print(lux);
+    Serial.print(" auto=");
+    Serial.println(auto_run_enabled ? "on" : "off");
   } else {
     Serial.print("unknown ");
     Serial.println(cmd);

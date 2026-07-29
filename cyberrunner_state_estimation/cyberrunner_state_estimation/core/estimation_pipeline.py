@@ -19,6 +19,7 @@ class EstimationPipeline:
         viewpoint="side",
         show_subimages_detector=False,
         acceleration_backend="cpu",
+        ai_config=None,
     ):
 
         share = get_package_share_directory("cyberrunner_state_estimation")
@@ -29,6 +30,7 @@ class EstimationPipeline:
             viewpoint=viewpoint,
             show_subimages_detector=show_subimages_detector,
             acceleration_backend=acceleration_backend,
+            ai_config=ai_config,
         )
         if estimator == "FiniteDiff":
             self.estimator = FiniteDiff(fps, FiniteDiff_mean_steps)

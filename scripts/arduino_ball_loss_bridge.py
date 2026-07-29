@@ -40,7 +40,8 @@ class ArduinoBallLossBridge(Node):
         self.send(args.stop_cmd)
         self.get_logger().info(
             f"Arduino bridge on {args.port} watching {args.topic}. "
-            "finite x_b = ball detected, NaN x_b = ball lost."
+            "finite x_b/y_b = ball detected; continuously missing for "
+            f"{args.lost_seconds:.1f}s sends '{args.run_cmd}'."
         )
 
     def connect_serial(self):
@@ -151,12 +152,13 @@ class ArduinoBallLossBridge(Node):
 
         if detected:
             self.detected_count += 1
+            if self.detected_count < self.args.detected_frames:
+                return
             self.lost_since = None
-            if self.detected_count >= self.args.detected_frames:
-                self.last_run_time = 0.0
-                if now - self.last_stop_time >= self.args.stop_every:
-                    self.send(self.args.stop_cmd)
-                    self.last_stop_time = now
+            self.last_run_time = 0.0
+            if now - self.last_stop_time >= self.args.stop_every:
+                self.send(self.args.stop_cmd)
+                self.last_stop_time = now
             return
 
         self.detected_count = 0

@@ -10,8 +10,16 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
-        ("share/" + package_name, ["data/path_0002_hard.pkl",
-                                   "data/path_custom.pkl"]),
+        (
+            "share/" + package_name,
+            [
+                "data/path_0002_hard.pkl",
+                "data/path_custom.pkl",
+                "data/map.DXF",
+                "data/path.DXF",
+                "data/map_preview.png",
+            ],
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

@@ -113,10 +113,13 @@ def detect_gaussian(mask, j, q, th, show_sub, use_contour=True):
                 # print("circularity", circularity)
                 # print("area", area)
                 # print("")
-                # The current 640x400 camera view produces a valid marble
-                # contour around 80 px^2. Keep the threshold above observed
-                # small-noise contours while accepting the real marble.
-                if M["m00"] != 0 and circularity > 0.12 and area > 80:
+                # A fully-visible marble is ~160-180 px^2 here. Keep the minimum
+                # area low (30) so a PARTIALLY-OCCLUDED marble (blocked by a wall/
+                # edge, showing only a fraction of its blue) is still detected. The
+                # predictive 80px crop + locked blue keep false positives away, so
+                # a low floor is safe. circularity floor also relaxed since a
+                # partially-blocked marble is a less-round crescent.
+                if M["m00"] != 0 and circularity > 0.25 and area > 50:
                     cx = M["m10"] / M["m00"]
                     cy = M["m01"] / M["m00"]
                     c = np.array([cy, cx])

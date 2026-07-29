@@ -251,11 +251,11 @@ class CyberrunnerGym(gym.Env):
             0.0,
             float(os.environ.get("CYBERRUNNER_BALL_PREDICTION_MAX_SPEED_MPS", "0.15")),
         )
-        self.max_angle_vel = float(os.environ.get("CYBERRUNNER_MAX_ANGLE_VEL", "240"))
+        self.max_angle_vel = float(os.environ.get("CYBERRUNNER_MAX_ANGLE_VEL", "300"))
         self.alpha_fac = float(os.environ.get("CYBERRUNNER_ALPHA_FAC", "-1.0"))
         self.beta_fac = float(os.environ.get("CYBERRUNNER_BETA_FAC", "-1.0"))
-        self.max_cmd_1 = float(os.environ.get("CYBERRUNNER_MAX_CMD_1", "240"))
-        self.max_cmd_2 = float(os.environ.get("CYBERRUNNER_MAX_CMD_2", "240"))
+        self.max_cmd_1 = float(os.environ.get("CYBERRUNNER_MAX_CMD_1", "300"))
+        self.max_cmd_2 = float(os.environ.get("CYBERRUNNER_MAX_CMD_2", "300"))
         self.action_repeat = max(1, int(os.environ.get("CYBERRUNNER_ACTION_REPEAT", "1")))
         self.rest_after_sec = float(os.environ.get("CYBERRUNNER_REST_AFTER_SEC", "3600"))
         self.rest_duration_sec = float(

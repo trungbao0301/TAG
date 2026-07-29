@@ -1,6 +1,6 @@
 import sys
 
-from cyberrunner_dreamer import cyberrunner_layout
+from cyberrunner_dreamer import cyberrunner_layout_custom
 from cyberrunner_dreamer.path import LinearPath
 
 from cyberrunner_interfaces.msg import DynamixelVel, StateEstimateSub
@@ -45,7 +45,7 @@ class CyberrunnerGym(gym.Env):
     def __init__(
         self,
         repeat=1,
-        layout=cyberrunner_layout.cyberrunner_hard_layout,
+        layout=cyberrunner_layout_custom.cyberrunner_dxf_layout,
         num_rel_path=5,
         num_wait_steps=30,
         reward_on_fail=0.0,
@@ -74,7 +74,12 @@ class CyberrunnerGym(gym.Env):
         #     [0.0, 0.0, -10 * np.pi / 180.0, -10 * np.pi / 180.0] +
         #     [-0.01 * (k + 1) for k in range(self.num_rel_path) for _ in
         #      range(2)])
-        self.norm_max = np.array([10 * np.pi / 180.0, 10 * np.pi / 180.0, 0.276, 0.231])
+        board_size = np.array(
+            [layout["board_width"], layout["board_height"]], dtype=np.float32
+        )
+        self.norm_max = np.array(
+            [10 * np.pi / 180.0, 10 * np.pi / 180.0, *board_size]
+        )
         self.goal_norm_max = np.array(
             [0.0002 * 60 * k for k in range(1, self.num_rel_path + 1) for _ in range(2)]
         )
@@ -99,9 +104,9 @@ class CyberrunnerGym(gym.Env):
 
         self.repeat = repeat
 
-        self.offset = np.array([0.276, 0.231]) / 2.0
+        self.offset = board_size / 2.0
         shared = get_package_share_directory("cyberrunner_dreamer")
-        self.p = LinearPath.load(os.path.join(shared, "path_0002_hard.pkl"))
+        self.p = LinearPath.load(os.path.join(shared, "path_custom.pkl"))
         # if not self.cheat:
         #     self.p = LinearPath.load("path_0002_hard.pkl")
         # else:

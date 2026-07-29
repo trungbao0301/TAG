@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import time
+import subprocess
 import cv2
 import rclpy
 from rclpy.node import Node
@@ -23,6 +24,23 @@ class FastCameraPublisher(Node):
         self.declare_parameter("border_y", 20)
         self.declare_parameter("fourcc", "MJPG")
         self.declare_parameter("exposure", -1)  # -1 = auto, >0 = manual (100µs units, e.g. 150 = 15ms)
+
+        # Locked color controls (tuned via camera_tuner_live.py) applied with
+        # v4l2-ctl after the device opens, so the marble's blue is STABLE across
+        # every maze position. -999 means "leave the camera default / skip".
+        self.declare_parameter("v4l2_white_balance_automatic", 0)
+        self.declare_parameter("v4l2_white_balance_temperature", 4000)
+        # 1 = Manual (locks exposure_time_absolute -> stable frame rate). Do NOT
+        # use 3 (aperture priority): the camera then auto-picks a long exposure in
+        # this lighting (~55ms), which caps the frame rate at ~18fps and starves
+        # the RL training of data. Manual 8ms exposure gives ~45fps.
+        self.declare_parameter("v4l2_auto_exposure", 1)
+        self.declare_parameter("v4l2_exposure_time_absolute", 80)
+        self.declare_parameter("v4l2_saturation", 40)
+        self.declare_parameter("v4l2_gamma", -999)  # -999 = skip (use camera default)
+        self.declare_parameter("v4l2_contrast", -999)  # -999 = skip (use camera default)
+        self.declare_parameter("v4l2_brightness", -999)  # -999 = skip (use camera default)
+        self.declare_parameter("v4l2_power_line_frequency", -999)  # -999 = skip (use camera default)
 
         self.device = self.get_parameter("device").value
         self.fps = float(self.get_parameter("fps").value)
@@ -78,8 +96,42 @@ class FastCameraPublisher(Node):
             f"Publishing output: {self.output_width}x{self.output_height + 2 * self.border_y}"
         )
 
+        self._apply_v4l2_color_controls()
+
         self.frame_count = 0
         self.last_report_time = time.time()
+
+    def _apply_v4l2_color_controls(self):
+        """Push the locked color controls with v4l2-ctl (after cv2 config so
+        these win). Order matters: disable the 'auto' before its manual value."""
+        gp = lambda n: int(self.get_parameter(n).value)
+        # (v4l2 control name, parameter name) in dependency-safe order
+        controls = [
+            ("white_balance_automatic", "v4l2_white_balance_automatic"),
+            ("auto_exposure", "v4l2_auto_exposure"),
+            ("power_line_frequency", "v4l2_power_line_frequency"),
+            ("white_balance_temperature", "v4l2_white_balance_temperature"),
+            ("exposure_time_absolute", "v4l2_exposure_time_absolute"),
+            ("saturation", "v4l2_saturation"),
+            ("gamma", "v4l2_gamma"),
+            ("contrast", "v4l2_contrast"),
+            ("brightness", "v4l2_brightness"),
+        ]
+        applied = []
+        for ctrl, param in controls:
+            val = gp(param)
+            if val == -999:
+                continue
+            try:
+                subprocess.run(
+                    ["v4l2-ctl", "-d", self.device, f"--set-ctrl={ctrl}={val}"],
+                    check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                applied.append(f"{ctrl}={val}")
+            except FileNotFoundError:
+                self.get_logger().warn("v4l2-ctl not found; color controls not applied.")
+                return
+        self.get_logger().info("Applied locked color controls: " + ", ".join(applied))
 
     def run(self):
         while rclpy.ok():

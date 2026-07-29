@@ -27,6 +27,11 @@ def generate_launch_description():
             DeclareLaunchArgument("pipeline_fps", default_value="55.0"),
             DeclareLaunchArgument("process_every_n", default_value="1"),
             DeclareLaunchArgument("estimator_executable", default_value="estimator_sub"),
+            DeclareLaunchArgument("ai_mode", default_value="off"),
+            DeclareLaunchArgument("ai_model_path", default_value=""),
+            DeclareLaunchArgument("ai_confidence_threshold", default_value="0.90"),
+            DeclareLaunchArgument("ai_check_every_n_frames", default_value="5"),
+            DeclareLaunchArgument("ai_occlusion_grace_frames", default_value="90"),
             Node(
                 package="cyberrunner_camera",
                 executable="cam_publisher.py",
@@ -84,6 +89,28 @@ def generate_launch_description():
                                 ),
                                 "process_every_n": ParameterValue(
                                     LaunchConfiguration("process_every_n"),
+                                    value_type=int,
+                                ),
+                                "ai_mode": LaunchConfiguration("ai_mode"),
+                                "ai_model_path": LaunchConfiguration(
+                                    "ai_model_path"
+                                ),
+                                "ai_confidence_threshold": ParameterValue(
+                                    LaunchConfiguration(
+                                        "ai_confidence_threshold"
+                                    ),
+                                    value_type=float,
+                                ),
+                                "ai_check_every_n_frames": ParameterValue(
+                                    LaunchConfiguration(
+                                        "ai_check_every_n_frames"
+                                    ),
+                                    value_type=int,
+                                ),
+                                "ai_occlusion_grace_frames": ParameterValue(
+                                    LaunchConfiguration(
+                                        "ai_occlusion_grace_frames"
+                                    ),
                                     value_type=int,
                                 ),
                             }

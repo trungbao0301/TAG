@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import math
+import os
 import numpy as np
 import cv2
 
@@ -9,20 +10,21 @@ from rclpy.node import Node
 
 from cyberrunner_interfaces.msg import StateEstimateSub
 
-from cyberrunner_dreamer.cyberrunner_layout import cyberrunner_hard_layout
+from cyberrunner_dreamer.cyberrunner_layout_custom import cyberrunner_dxf_layout
 from cyberrunner_dreamer.path import LinearPath
 
 
-BOARD_W = 0.276
-BOARD_H = 0.231
-WALL_R = 0.0025
-HOLE_R = 0.0075
+LAYOUT = cyberrunner_dxf_layout
+BOARD_W = float(LAYOUT["board_width"])
+BOARD_H = float(LAYOUT["board_height"])
+WALL_R = float(LAYOUT.get("ball_radius", 0.006))
+HOLE_R = float(max(LAYOUT.get("hole_radii", [0.0075])))
 
 VIEW_W = 900
 VIEW_H = int(VIEW_W * BOARD_H / BOARD_W)
 
-# State estimate uses centered coordinates in env_tcp.py,
-# so env_tcp adds offset = [0.276, 0.231] / 2.
+# State estimate uses centered coordinates; the generated DXF layout uses a
+# lower-left origin.
 OFFSET = np.array([BOARD_W, BOARD_H], dtype=np.float32) / 2.0
 
 
@@ -42,20 +44,14 @@ class OverlayMapView(Node):
     def __init__(self):
         super().__init__("overlay_map_view")
 
-        self.layout = cyberrunner_hard_layout
-        waypoints = np.asarray(self.layout["waypoints"], dtype=np.float32)
-        walls_h = np.asarray(self.layout["walls_h"], dtype=np.float32)
-        walls_v = np.asarray(self.layout["walls_v"], dtype=np.float32)
-        holes = np.asarray(self.layout["holes"], dtype=np.float32)
-
-        self.path = LinearPath(
-            waypoints=waypoints,
-            walls_h=walls_h,
-            walls_v=walls_v,
-            holes=holes,
-            board_width=BOARD_W,
-            board_height=BOARD_H,
-            wall_r=WALL_R,
+        self.layout = LAYOUT
+        self.path = LinearPath.load(
+            os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "cyberrunner_dreamer",
+                "data",
+                "path_custom.pkl",
+            )
         )
 
         self.latest_msg = None
@@ -97,6 +93,15 @@ class OverlayMapView(Node):
             p1 = world_to_px(x, y1)
             p2 = world_to_px(x, y2)
             cv2.line(img, p1, p2, (120, 120, 120), wall_px * 2)
+
+        for x1, y1, x2, y2 in self.layout.get("walls_angled", []):
+            cv2.line(
+                img,
+                world_to_px(x1, y1),
+                world_to_px(x2, y2),
+                (120, 120, 120),
+                wall_px * 2,
+            )
 
         # Path points
         pts = np.asarray(self.path.points, dtype=np.float32)
