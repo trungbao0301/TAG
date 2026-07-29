@@ -3,7 +3,7 @@
 Training is split across two machines:
 
 - **PC** (the one wired to the labyrinth) runs the camera, the state estimator,
-  the motors, and a TCP bridge.
+  the Hiwonder servos, and a TCP bridge.
 - **Server** (the GPU box) runs DreamerV3. Its gym environment *listens* on
   port 5555; the PC's bridge connects out to it.
 
@@ -43,9 +43,9 @@ python3 fast_camera_publisher_v2.py
 cd ~/CYBER/cyberruner-main
 ./run_ai_map_estimator.sh
 
-# 3. motors
+# 3. servos  (Hiwonder; the node lives in the cyberrunner_dynamixel package)
 cd ~/CYBER/cyberruner-main
-ros2 run cyberrunner_dynamixel cyberrunner_dynamixel
+ros2 run cyberrunner_dynamixel hiwonder_compat_node.py
 
 # 4. TCP bridge to the server   (replace with the server's IP)
 cd ~/CYBER/cyberruner-main
@@ -54,6 +54,18 @@ python3 tcp_ros_bridge.py 192.168.1.50 5555
 
 Then place the marble at the start position. Training begins once the server
 logs step 0.
+
+This rig uses **Hiwonder** servos. `hiwonder_compat_node.py` is a drop-in for the
+Dynamixel node -- same `DynamixelVel` topic and `DynamixelReset` service -- which
+is why `tcp_ros_bridge.py` needs no change. If the servos do not come up, the USB
+hidraw node usually needs permissions:
+
+```bash
+./scripts/reconnect_hiwonder.sh     # fixes permissions and restarts the node
+```
+
+Do not run `ros2 run cyberrunner_dynamixel cyberrunner_dynamixel` -- that is the
+actual Dynamixel driver and will not find this hardware.
 
 Optional fifth terminal, to watch what the policy sees:
 
@@ -116,7 +128,7 @@ env. `run_server_dreamer_stuck_gpu0.sh` sets sensible values for all of them.
 | `CYBERRUNNER_BALL_LOSS_GRACE_SEC` | grace before a loss counts |
 | `CYBERRUNNER_TCP_PORT` | must match the port given to `tcp_ros_bridge.py` |
 
-On the **PC**, `tcp_ros_bridge.py` reads `CYBERRUNNER_MAX_CMD_1`/`_2` (motor
+On the **PC**, `tcp_ros_bridge.py` reads `CYBERRUNNER_MAX_CMD_1`/`_2` (servo
 command clamps) and `CYBERRUNNER_BALL_LOST_RESET_FRAMES`.
 
 ## Evaluating a trained policy
@@ -125,7 +137,7 @@ command clamps) and `CYBERRUNNER_BALL_LOST_RESET_FRAMES`.
 ros2 run cyberrunner_dreamer eval      # note the workspace trap above
 ```
 
-Motor-only smoke test, no learning:
+Servo-only smoke test, no learning:
 
 ```bash
 ros2 run cyberrunner_dreamer test

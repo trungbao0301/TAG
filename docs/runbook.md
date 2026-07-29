@@ -76,21 +76,25 @@ ros2 run cyberrunner_dynamixel hiwonder_compat_node.py
 ### 3. State estimator
 
 ```bash
-./run_estimator_cyber.sh --ros-args \
-  -p ai_mode:=hybrid \
-  -p ai_model_path:=$PWD/models/marble_detector.onnx
+./run_ai_map_estimator.sh
 ```
 
-To A/B a different model, just swap the path — nothing else changes:
+Every parameter defaults to its calibrated value, so pass nothing unless you mean
+to override. To A/B a different model:
+
 ```bash
-  -p ai_model_path:=$PWD/models/marble_detector_v5_moredata.onnx
+MODEL=models/marble_detector_v5_moredata.onnx ./run_ai_map_estimator.sh
 ```
 
 Check:
 ```bash
-ros2 topic echo /cyberrunner_state_estimation/ball_source     # want: fused
-ros2 topic hz   /cyberrunner_state_estimation/estimate        # ~55 Hz
+ros2 topic echo /cyberrunner_state_estimation/status --once   # want: valid
+ros2 topic hz   /cyberrunner_state_estimation/estimate        # ~40 Hz
 ```
+
+`ai_mode` and `ball_source` belonged to the retired HSV/AI hybrid estimator and no
+longer exist -- the marble is AI-only now. See
+[AI_MAP_ESTIMATOR.md](../cyberrunner_state_estimation/AI_MAP_ESTIMATOR.md).
 
 ### 4. Arduino ball-loss bridge
 
