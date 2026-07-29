@@ -118,6 +118,41 @@ def test_fixed_guard_acquires_dots_a_few_pixels_off_the_hand_clicked_seeds():
     assert np.allclose(accepted, dots)
 
 
+def test_fixed_guard_cannot_creep_away_from_its_calibrated_anchor():
+    # Every other gate is a per-FRAME limit, so a corner nudged 2 px per frame
+    # passes all of them and the quad walks arbitrarily far. Observed live: the
+    # fixed markers ended up tens of px off the real dots after a long run.
+    corners = _synthetic_corners_rc()
+    guard = MarkerQuadGuard(corners, mode="fixed", smoothing=1.0)
+    creeping = corners.copy()
+    seen = []
+    for step in range(200):
+        creeping = creeping + [0.0, 2.0]  # 2 px/frame, inside every gate
+        accepted, valid, status = guard.update(
+            creeping, [True] * 4, 1.0 + step / 60.0
+        )
+        seen.append(status)
+        assert valid  # fixed mode stays usable by holding position
+        drift = np.linalg.norm(accepted - corners, axis=1).max()
+        assert drift <= guard.anchor_radius_px + 1.0, (
+            f"drifted {drift:.1f} px by step {step}"
+        )
+    # The anchor must have fired; afterwards the runaway candidate is genuinely
+    # far from the held quad, so plain jump rejection is the correct report.
+    assert "fixed_marker_drift_reset" in seen
+    assert seen[-1] in ("fixed_marker_drift_reset", "fixed_marker_jump_rejected")
+
+
+def test_fixed_guard_still_follows_genuine_small_camera_motion():
+    # The anchor must not block real motion inside its radius.
+    corners = _synthetic_corners_rc()
+    guard = MarkerQuadGuard(corners, mode="fixed", smoothing=1.0)
+    shifted = corners + [1.0, 2.0]
+    accepted, valid, status = guard.update(shifted, [True] * 4, 1.0)
+    assert valid and status == "valid"
+    assert np.allclose(accepted, shifted)
+
+
 def test_moving_guard_rejects_outside_blob_then_times_out():
     corners = _synthetic_corners_rc()
     guard = MarkerQuadGuard(

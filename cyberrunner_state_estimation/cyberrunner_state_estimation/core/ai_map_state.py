@@ -59,6 +59,7 @@ class MarkerQuadGuard:
         max_shape_change_fraction=0.08,
         smoothing=0.45,
         acquire_radius_px=14.0,
+        anchor_radius_px=20.0,
     ):
         if mode not in ("fixed", "moving"):
             raise ValueError("mode must be 'fixed' or 'moving'")
@@ -67,6 +68,23 @@ class MarkerQuadGuard:
             raise ValueError("initial_corners_rc must be finite shape (4,2)")
         self.mode = mode
         self.corners = corners.copy()
+        # Absolute anchor for the FIXED quad, and the whole reason it exists:
+        # every other gate here is a per-FRAME limit. jitter_px +
+        # max_speed_px_s * dt bounds how far a corner may move between frames
+        # (~3.7 px at 60 fps), and found-but-untrusted corners are advanced by
+        # group_delta every frame regardless. So displacement from the true dot
+        # was never bounded at all -- a corner could walk arbitrarily far a few
+        # px at a time, which is what happens when a hand or the blue hose
+        # drifts through the search window for a while. Observed live: the fixed
+        # quad wandered tens of px away over a long run while the same frames
+        # replayed from the seeds tracked correctly.
+        #
+        # The outer frame is bolted down: measured over 119 frames spanning the
+        # full tilt range, its dots move 0.9 px peak-to-peak. So a corner more
+        # than anchor_radius_px from where it was calibrated is wrong by
+        # definition, and clamping to the anchor is always the better guess.
+        self.anchor = corners.copy()
+        self.anchor_radius_px = max(0.0, float(anchor_radius_px))
         self.occlusion_grace_sec = max(0.0, float(occlusion_grace_sec))
         self.max_speed_px_s = float(
             max_speed_px_s
@@ -165,6 +183,18 @@ class MarkerQuadGuard:
                 return self._held_result(timestamp, "fixed_marker_jump_rejected")
             proposed = self.corners + group_delta
             proposed[trusted] = candidate[trusted]
+            # Clamp to the calibrated anchor. Without this the per-frame gates
+            # bound velocity but not displacement, so the quad can drift away a
+            # few px at a time. See self.anchor.
+            drift = np.linalg.norm(proposed - self.anchor, axis=1)
+            runaway = drift > self.anchor_radius_px
+            if np.any(runaway):
+                proposed[runaway] = self.anchor[runaway]
+                if np.count_nonzero(runaway) >= 3:
+                    # The whole quad has walked off: re-seed rather than creep.
+                    self.corners = self.anchor.copy()
+                    self.timestamp = timestamp
+                    return self._held_result(timestamp, "fixed_marker_drift_reset")
         else:
             trusted = found & (np.linalg.norm(deltas, axis=1) <= max_step)
             if np.count_nonzero(trusted) < 3:
