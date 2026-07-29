@@ -43,6 +43,28 @@ def ros_time_seconds(stamp):
     return float(stamp.sec) + float(stamp.nanosec) * 1.0e-9
 
 
+def default_model_path():
+    """Locate models/marble_detector.onnx without assuming the install layout.
+
+    The previous form used os.path.dirname(__file__), which under
+    colcon --symlink-install is build/<pkg>/<pkg>/, so "../.." resolved to
+    build/ and the default pointed at build/models/marble_detector.onnx --
+    a path that never exists. Every launch therefore had to pass ai_model_path
+    explicitly or fail with FileNotFoundError.
+    """
+    here = os.path.dirname(os.path.realpath(__file__))  # follows the symlink
+    candidates = [
+        os.path.abspath(os.path.join(here, "..", "..", "models")),
+        os.path.abspath(os.path.join(here, "..", "..", "..", "models")),
+        os.path.join(os.getcwd(), "models"),
+    ]
+    for directory in candidates:
+        path = os.path.join(directory, "marble_detector.onnx")
+        if os.path.isfile(path):
+            return path
+    return os.path.join(candidates[0], "marble_detector.onnx")
+
+
 def crop_ball_image(frame, xy, size=64):
     result = np.zeros((size, size, 3), dtype=np.uint8)
     if xy is None or not np.all(np.isfinite(xy)):
@@ -63,10 +85,7 @@ def crop_ball_image(frame, xy, size=64):
 class AiMapEstimatorNode(Node):
     def __init__(self):
         super().__init__("cyberrunner_ai_map_estimator")
-        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        self.declare_parameter(
-            "ai_model_path", os.path.join(root, "models", "marble_detector.onnx")
-        )
+        self.declare_parameter("ai_model_path", default_model_path())
         self.declare_parameter("ai_confidence_threshold", 0.90)
         # Fallback only: map_ai_pixel prefers the height recovered by PnP from
         # the moving dots, and takes it whenever |z| > 0.05 m, which is always
@@ -109,7 +128,13 @@ class AiMapEstimatorNode(Node):
         self.declare_parameter("fixed_marker_max_speed_px_s", 100.0)
         self.declare_parameter("moving_marker_max_speed_px_s", 300.0)
         self.declare_parameter("marker_acquire_radius_px", 14.0)
-        self.declare_parameter("publish_legacy_topics", False)
+        # Publish on /cyberrunner_state_estimation/* by default: this node is now
+        # THE estimator, and every consumer already listens there --
+        # overlay_map_view_simple, cyberrunner_dreamer's env.py (estimate_subimg),
+        # scripts/arduino_ball_loss_bridge.py and the hardware recorder. Set false
+        # to publish under /cyberrunner_ai_map/* instead, e.g. to A/B two
+        # estimators side by side.
+        self.declare_parameter("publish_legacy_topics", True)
         self.declare_parameter("show_image", False)
         self.declare_parameter("camera_topic", "/cyberrunner_camera/image")
 

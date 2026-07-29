@@ -26,7 +26,11 @@ def generate_launch_description():
             DeclareLaunchArgument("border_y", default_value="20"),
             DeclareLaunchArgument("pipeline_fps", default_value="55.0"),
             DeclareLaunchArgument("process_every_n", default_value="1"),
-            DeclareLaunchArgument("estimator_executable", default_value="estimator_sub"),
+            # The AI-map estimator is the supported one; estimator_sub is the retired
+            # HSV/ocam pipeline kept only for reference.
+            DeclareLaunchArgument(
+                "estimator_executable", default_value="estimator_ai_map"
+            ),
             DeclareLaunchArgument("ai_mode", default_value="off"),
             DeclareLaunchArgument("ai_model_path", default_value=""),
             DeclareLaunchArgument("ai_confidence_threshold", default_value="0.90"),

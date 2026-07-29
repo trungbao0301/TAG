@@ -12,7 +12,7 @@ Train
 
 3. In terminal 2 run
 
-        ros2 run cyberrunner_state_estimation estimator_sub
+        ros2 run cyberrunner_state_estimation estimator_ai_map
 
 4. In terminal 3 run 
 

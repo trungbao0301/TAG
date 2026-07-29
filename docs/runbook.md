@@ -220,7 +220,7 @@ Reverse order. Stop the trainer first so the bridge is not yanked mid-episode:
 ssh tbt589@aere-a83514.ae.utexas.edu 'tmux kill-session -t cyberrunner_fresh'
 
 # local — kill by PID, not by pattern
-pgrep -af "tcp_ros_bridge.py|estimator_sub|overlay_map_view_simple|ai_detector"
+pgrep -af "tcp_ros_bridge.py|estimator_ai_map|overlay_map_view_simple|ai_detector"
 kill <pid> ...
 ```
 

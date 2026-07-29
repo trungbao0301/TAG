@@ -10,7 +10,6 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
-        ("share/" + package_name, glob("calib/*.txt")),
         ("share/" + package_name, ["markers.csv"]),
         # Optional: written by tools/calibrate_camera_holes.py, absent until run.
         ("share/" + package_name, glob("pinhole_calib.json")),
@@ -25,8 +24,6 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "estimator = cyberrunner_state_estimation.cyberrunner_state_estimation_node:main",
-            "estimator_sub = cyberrunner_state_estimation.cyberrunner_state_estimation_subimg:main",
             "select_markers = cyberrunner_state_estimation.select_markers:main",
             "ai_labeler = cyberrunner_state_estimation.ai_dataset_labeler:main",
             "ai_train = cyberrunner_state_estimation.train_ai_marble:main",

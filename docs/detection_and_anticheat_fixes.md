@@ -247,7 +247,7 @@ duration instead of a frozen ball.
 repo in `AMENT_PREFIX_PATH`. So:
 
 ```
-ros2 run cyberrunner_state_estimation estimator_sub
+ros2 run cyberrunner_state_estimation estimator_ai_map
 ```
 
 silently resolves the **other** workspace's executable — different node name, no

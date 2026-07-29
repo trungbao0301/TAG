@@ -16,8 +16,8 @@ source "$CY/install/setup.bash"
 # Keep the same DDS domain as the camera/bridge (default 0).
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 
-echo "estimator_sub resolves to:"
+echo "estimator_ai_map resolves to:"
 echo "  AMENT head: $(echo "$AMENT_PREFIX_PATH" | tr ':' '\n' | grep cyberrunner | head -1)"
 
 cd "$CY"
-exec ros2 run cyberrunner_state_estimation estimator_sub "$@"
+exec ros2 run cyberrunner_state_estimation estimator_ai_map "$@"
