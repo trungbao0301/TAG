@@ -1,0 +1,22 @@
+{
+  "camera_height_mm_max": 300.7111719203871,
+  "camera_height_mm_median": 300.1720421568939,
+  "camera_height_mm_min": 299.6686560313077,
+  "cx": 320.0,
+  "cy": 200.0,
+  "dist": [
+    -0.29987676711186184,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "fx": 333.7492323197005,
+  "fy": 333.7492323197005,
+  "image_height": 400,
+  "image_width": 640,
+  "num_points": 423,
+  "num_views": 22,
+  "rms_reprojection_px": 0.46402370192994413,
+  "ruler_height_mm": 290.0
+}

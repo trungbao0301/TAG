@@ -16,8 +16,16 @@ from .maze_layout import (
 # The layout uses a lower-left origin, while state estimation uses a board-
 # centered origin. Keep this small geometry-only module independent of Dreamer
 # so the ROS estimator does not need to import the training package.
-MOVING_MARKER_SPACING_X_M = 0.269
-MOVING_MARKER_SPACING_Y_M = 0.237
+# Fitted from 40 tilted views / 745 hole observations by
+# tools/fit_marker_geometry.py, NOT the ETH original's 0.269 x 0.237. Those were
+# inherited nominal values for different hardware; this board runs a custom maze.
+# Profiling the dot-plane height h against the known DXF hole positions gives a
+# clear minimum at h = 10 mm (median residual 2.13 mm at h=0, 1.49 mm at h=10,
+# 1.92 mm at h=20), independently reproducing a 1 cm ruler measurement, and at
+# that optimum the spacing is 249.2 x 222.3 mm. Median hole residual over the
+# whole set improves 5.67 -> 1.49 mm versus the old constants.
+MOVING_MARKER_SPACING_X_M = 0.2492
+MOVING_MARKER_SPACING_Y_M = 0.2223
 
 HOLES_LOWER_LEFT_M = np.asarray(HOLES_LOWER_LEFT_M, dtype=np.float32)
 HOLE_RADII_M = np.asarray(HOLE_RADII_M, dtype=np.float32)

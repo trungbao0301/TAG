@@ -1,3 +1,4 @@
+import json
 import os
 import cv2
 import numpy as np
@@ -14,9 +15,35 @@ class PlatePoseEstimator:
     # constants
     L_EXT_INT_X = 0.305  # measured outer frame span along x
     L_EXT_INT_Y = 0.274
-    C2C_X = 0.269  # moving-marker center spacing along x
-    C2C_Y = 0.237  # moving-marker center spacing along y
-    H_BORDERS = 0.026  # marker plane height above the marble surface
+    # Fitted from 40 tilted views / 745 hole observations by
+    # tools/fit_marker_geometry.py, NOT the ETH original's 0.269 x 0.237. Those
+    # were inherited nominal values for different hardware; this board runs a
+    # custom maze. Profiling the dot-plane height h against the known DXF hole
+    # positions gives a clear minimum at h = 10 mm (median residual 2.13 mm at
+    # h=0, 1.49 mm at h=10, 1.92 mm at h=20), independently reproducing a 1 cm
+    # ruler measurement, and at that optimum the spacing is 249.2 x 222.3 mm.
+    # Median hole residual improves 5.67 -> 1.49 mm versus the old constants.
+    C2C_X = 0.2492  # moving-marker center spacing along x
+    C2C_Y = 0.2223  # moving-marker center spacing along y
+    # Marker plane height above the marble surface.
+    #
+    # Solved from the tilt-coupled position error, not measured with a ruler.
+    # The four moving dots are COPLANAR, so PnP's reprojection is identical for
+    # any value of this constant -- it only TRANSLATES the maze origin along the
+    # plate normal, and cannot change the recovered plate orientation. That is
+    # why the 0.369 px marker fit validated nothing about it, and why alpha/beta
+    # are unaffected by changing it.
+    #
+    # The origin sits H_BORDERS below the dot plane, so when the plate tilts by
+    # beta that offset rotates and moves the origin laterally by
+    # H_BORDERS*sin(beta). An error dH = H_assumed - H_true therefore injects
+    # -dH*sin(beta) into every reported ball position.
+    #
+    # Measured over 5518 post-calibration samples: corr(y, beta) = -0.988 with
+    # overshoot = -22.42 mm/rad * beta, i.e. dH = +22.4 mm, giving
+    # H_true = 26.0 - 22.4 = 3.6 mm. That is consistent with the dots sitting
+    # nearly flush on the surface rather than on a 26 mm raised border.
+    H_BORDERS = 0.0036
 
     r = 0.008 / 2
     R_BALL = 0.012 / 2
@@ -61,17 +88,78 @@ class PlatePoseEstimator:
         ]
     )
 
-    def __init__(self, print_details: bool = False):
+    # Whether undistort_points routes the raw pixels through the ocam model.
+    #
+    # It must not, for this camera. calib_results_cyberrunner.txt describes a
+    # 1920x1200 capture; the pipeline captures 1280x720 (see
+    # fast_camera_publisher_v2.py, which resizes to 640x360 and pads to
+    # 640x400), so the polynomial does not transfer. Measured on markers.csv:
+    #
+    #   moving dots  raw 276.50 x 245.00 px (ratio 1.1286)
+    #                ocam 143.22 x 126.93 px (ratio 1.1283)
+    #   fixed dots   raw 320.00 x 195.50 px (ratio 1.6368)
+    #                ocam 166.36 x 101.63 px (ratio 1.6370)
+    #
+    # The ocam pass changes the SCALE by 1.93x and leaves both aspect ratios
+    # untouched to 4 decimal places -- it applies no shape correction at all
+    # over the board, only a wrong magnification. Because get_pose_T__C_P
+    # solvePnPs with the same self.f that K_ocam reprojected with, self.f
+    # cancels and the effective focal length becomes the one the polynomial
+    # implies on-axis, |ss[0]| = 673.2 px after scale(3). The true value is
+    # 298.1 px: the 269 mm dot spacing images as 276.50 px with the dot plane
+    # a ruler-measured 0.290 m from the lens. So the pose came out 673.2/298.1
+    # = 2.26x too far -- camera height 0.556 m instead of 0.290 m -- and every
+    # angle derived from it carried that scale error.
+    #
+    # The raw image is already rectilinear to 0.6% over the board (measured
+    # 1.1286 vs the true 269/237 = 1.1350), so a plain pinhole at f = 300 px is
+    # both simpler and more accurate here than the mismatched fisheye model.
+    #
+    # Left switchable because MeasurementSystem also calls o.world2cam and
+    # o.cam2world directly, and that legacy chain is only self-consistent when
+    # the pose comes from the same ocam mapping.
+    USE_OCAM_UNDISTORT = False
+
+    def __init__(self, print_details: bool = False, use_ocam_undistort=None):
         self.print_details = print_details
+        self.use_ocam_undistort = (
+            PlatePoseEstimator.USE_OCAM_UNDISTORT
+            if use_ocam_undistort is None
+            else bool(use_ocam_undistort)
+        )
 
         share = get_package_share_directory("cyberrunner_state_estimation")
         o = OcamModel(os.path.join(share, "calib_results_cyberrunner.txt"))
         o.scale(3)  # From 1920 to 640 res
         self.o = o
         xc, yc = o.xc, o.yc
+        # 298.1 px from the dot spacing at the measured 0.290 m; 300 keeps the
+        # value the virtual pinhole has always used and is within 0.6%.
         self.f = 300
         self.K_ocam = np.array([[-self.f, 0, xc], [0, -self.f, yc], [0, 0, 1]])
         self.K = np.array([[+self.f, 0, yc], [0, +self.f, xc], [0, 0, 1]])
+
+        # A pinhole_calib.json written by tools/calibrate_camera_holes.py
+        # supersedes the f = 300 / zero-distortion assumption. Ignored in ocam
+        # mode, where the pose has to stay consistent with o.world2cam callers.
+        self.dist = None
+        calib_path = os.path.join(share, "pinhole_calib.json")
+        if not self.use_ocam_undistort and os.path.isfile(calib_path):
+            with open(calib_path) as handle:
+                calib = json.load(handle)
+            self.K = np.array(
+                [
+                    [calib["fx"], 0.0, calib["cx"]],
+                    [0.0, calib["fy"], calib["cy"]],
+                    [0.0, 0.0, 1.0],
+                ]
+            )
+            dist = np.asarray(calib.get("dist", []), dtype=np.float64).reshape(1, -1)
+            self.dist = dist if dist.size and np.any(dist) else None
+            self.f = float(calib["fx"])
+            self.calib_path = calib_path
+        else:
+            self.calib_path = None
 
         self.T__W_M = None
         self.T__W_C = None
@@ -205,6 +293,18 @@ class PlatePoseEstimator:
                                image coordinates of the undistorted points in (x,y) = (line, column) convention.
 
         """
+        if not self.use_ocam_undistort:
+            points = np.asarray(img_points_raw, dtype=np.float64).reshape(-1, 2)
+            if self.dist is None:
+                # Pinhole with no measured distortion: the raw pixels already
+                # are the undistorted pixels, and self.K carries the principal
+                # point. See USE_OCAM_UNDISTORT.
+                return points.copy()
+            # Undistort into the same K, so downstream solvePnP stays dist-free.
+            undistorted = cv2.undistortPoints(
+                np.flip(points, axis=1).reshape(-1, 1, 2), self.K, self.dist, P=self.K
+            ).reshape(-1, 2)
+            return np.flip(undistorted, axis=1)  # back to (row, column)
         P_w = self.o.cam2world(img_points_raw).T  # dim: (3, N)
         pt_undist = self.K_ocam @ P_w  # dim: (3, N)
         pt_undist = pt_undist / pt_undist[2, :]

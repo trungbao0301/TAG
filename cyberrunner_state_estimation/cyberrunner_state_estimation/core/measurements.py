@@ -19,19 +19,25 @@ class Measurements:
         viewpoint="side",
         show_subimages_detector=False,
         acceleration_backend="cpu",
+        ai_config=None,
     ):
         self.acceleration_backend = acceleration_backend
         self.detector = Detector(
             markers[4:],
             show_subimages=show_subimages_detector,
             acceleration_backend=acceleration_backend,
+            **(ai_config or {}),
         )
         self.detector_fixed_points = DetectorFixedPts(
             markers[:4],
             show_subimages=show_subimages_detector,
             acceleration_backend=acceleration_backend,
         )
-        self.plate_pose = PlatePoseEstimator()
+        # This legacy path also calls plate_pose.o.world2cam (ball subimage
+        # remap) and plate_pose.o.cam2world (create_mask) directly, so its pose
+        # must come from the same ocam mapping to stay self-consistent. The
+        # AI-map estimator uses neither and gets the corrected pinhole default.
+        self.plate_pose = PlatePoseEstimator(use_ocam_undistort=True)
 
         self.plate_angles = (None, None)
         self.ball_pos = None

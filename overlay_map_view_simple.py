@@ -30,11 +30,68 @@ from cyberrunner_dreamer.path import LinearPath
 LAYOUT = cyberrunner_dxf_layout
 BOARD_W = float(LAYOUT["board_width"])
 BOARD_H = float(LAYOUT["board_height"])
+BALL_R = float(LAYOUT.get("ball_radius", 0.006))
+
+# Half thickness of the boundary walls, derived instead of guessed.
+#
+# board_width/board_height are the wall CENTRELINE span: layout["walls_h"] has
+# segments at y = 0 and y = board_height exactly, walls_v at x = 0 and
+# x = board_width, all modelled as zero-thickness lines. So the marble centre
+# limit is half the span minus (wall half thickness + ball radius), and the
+# wall half thickness is not in the layout.
+#
+# It is bounded, though: a hole is cut in the floor and cannot overlap a wall,
+# so the closest any hole edge comes to a boundary centreline is an upper bound.
+# Measured on this layout: left 1.2, right 2.0, bottom 1.0, top 0.7 mm. The
+# previous hardcoded 0.0025 exceeded that bound by 1.8 mm, which made REACH_Y
+# 1.8 mm too tight and manufactured most of the "UNREACHABLE" overshoot.
+_HOLE_XY = np.asarray(LAYOUT["holes"], dtype=float)
+_HOLE_R = np.asarray(LAYOUT["hole_radii"], dtype=float)
+WALL_R = max(
+    0.0,
+    float(
+        min(
+            (_HOLE_XY[:, 0] - _HOLE_R).min(),
+            (BOARD_W - (_HOLE_XY[:, 0] + _HOLE_R)).min(),
+            (_HOLE_XY[:, 1] - _HOLE_R).min(),
+            (BOARD_H - (_HOLE_XY[:, 1] + _HOLE_R)).min(),
+        )
+    ),
+)
+
+# The view used to be exactly the playable rectangle, so anything reported
+# outside the board was silently clipped by OpenCV and a marble 15 mm past the
+# edge looked identical to one sitting on it. Render a margin so out-of-board
+# positions are actually visible.
+MARGIN_M = 0.022
+SPAN_W = BOARD_W + 2.0 * MARGIN_M
+SPAN_H = BOARD_H + 2.0 * MARGIN_M
+
 VIEW_W = 900
-VIEW_H = int(VIEW_W * BOARD_H / BOARD_W)
+VIEW_H = int(VIEW_W * SPAN_H / SPAN_W)
 SIDE_W = 260
 CANVAS_W = VIEW_W + SIDE_W
 OFFSET = np.array([BOARD_W, BOARD_H], dtype=np.float32) / 2.0
+
+# Moving corner-dot centre spacing (PlatePoseEstimator.C2C_X / C2C_Y). The state
+# origin is the CENTROID OF THESE DOTS, not necessarily the playable centre --
+# OFFSET above assumes the two coincide. Drawing the dot quad makes that
+# assumption checkable: it should sit concentrically outside the playable
+# rectangle by (269-259)/2 = 5 mm in x and (237-229)/2 = 4 mm in y.
+# Fitted from 40 tilted views / 745 hole observations by
+# tools/fit_marker_geometry.py, NOT the ETH original's 0.269 x 0.237. Those were
+# inherited nominal values for different hardware; this board runs a custom maze.
+# Profiling the dot-plane height h against the known DXF hole positions gives a
+# clear minimum at h = 10 mm (median residual 2.13 mm at h=0, 1.49 mm at h=10,
+# 1.92 mm at h=20), independently reproducing a 1 cm ruler measurement, and at
+# that optimum the spacing is 249.2 x 222.3 mm. Median hole residual over the
+# whole set improves 5.67 -> 1.49 mm versus the old constants.
+C2C_X = 0.2492
+C2C_Y = 0.2223
+
+# A marble centre cannot get closer to the playable edge than wall + radius.
+REACH_X = BOARD_W / 2.0 - (WALL_R + BALL_R)
+REACH_Y = BOARD_H / 2.0 - (WALL_R + BALL_R)
 
 WINDOW_NAME = "CyberRunner Overlay Map View"
 
@@ -53,17 +110,19 @@ COLOR_BALL = (0, 0, 255)           # Red
 COLOR_CHECKPOINT_RADIUS = (0, 190, 255)
 COLOR_DANGER_ZONE = (80, 80, 255)
 COLOR_SEGMENT_GUARD = (180, 0, 180)
+COLOR_DOT_QUAD = (200, 120, 0)      # corner-dot quad outline
+COLOR_REACH_LIMIT = (0, 140, 0)     # marble-centre reachable limit
 
 
 def world_to_px(x, y):
-    px = int(round(x / BOARD_W * VIEW_W))
-    py = int(round((BOARD_H - y) / BOARD_H * VIEW_H))
+    px = int(round((x + MARGIN_M) / SPAN_W * VIEW_W))
+    py = int(round((SPAN_H - (y + MARGIN_M)) / SPAN_H * VIEW_H))
     return px, py
 
 
 def meters_to_px(distance):
     """Convert a physical map distance to display pixels."""
-    return max(1, int(round(distance / BOARD_W * VIEW_W)))
+    return max(1, int(round(distance / SPAN_W * VIEW_W)))
 
 
 def draw_label(img, text, org, scale=0.50):
@@ -208,8 +267,23 @@ def make_base_map():
     danger_lines = layout.get("danger_lines", [])
     segment_guards = layout.get("segment_guards", [])
 
-    # Board border
-    cv2.rectangle(img, (0, 0), (VIEW_W - 1, VIEW_H - 1), COLOR_BORDER, 2)
+    # Playable-area border, in world coords now that the view has a margin.
+    cv2.rectangle(img, world_to_px(0.0, 0.0), world_to_px(BOARD_W, BOARD_H),
+                  COLOR_BORDER, 2)
+
+    # Corner-dot quad, centred on the STATE origin. If the state origin really is
+    # the playable centre, this sits concentrically 5 mm (x) / 4 mm (y) outside
+    # the border above. If the marble is ever seen outside the border but inside
+    # this quad, the two are NOT concentric and OFFSET is wrong.
+    dq0 = world_to_px(float(OFFSET[0]) - C2C_X / 2.0, float(OFFSET[1]) - C2C_Y / 2.0)
+    dq1 = world_to_px(float(OFFSET[0]) + C2C_X / 2.0, float(OFFSET[1]) + C2C_Y / 2.0)
+    cv2.rectangle(img, dq0, dq1, COLOR_DOT_QUAD, 1)
+    draw_label(img, "corner-dot quad (state origin)", (dq0[0] + 4, dq1[1] - 6), 0.42)
+
+    # Limit the marble CENTRE can physically reach (wall + ball radius inset).
+    rl0 = world_to_px(float(OFFSET[0]) - REACH_X, float(OFFSET[1]) - REACH_Y)
+    rl1 = world_to_px(float(OFFSET[0]) + REACH_X, float(OFFSET[1]) + REACH_Y)
+    cv2.rectangle(img, rl0, rl1, COLOR_REACH_LIMIT, 1)
 
     # Holes
     for (x, y), radius in zip(holes, hole_radii):
@@ -242,7 +316,7 @@ def make_base_map():
         if center is None or radius is None:
             continue
         zx, zy = world_to_px(float(center[0]), float(center[1]))
-        zr = max(1, int(round(float(radius) / BOARD_W * VIEW_W)))
+        zr = max(1, int(round(float(radius) / SPAN_W * VIEW_W)))
         overlay = img.copy()
         cv2.circle(overlay, (zx, zy), zr, COLOR_DANGER_ZONE, -1)
         cv2.addWeighted(overlay, 0.18, img, 0.82, 0.0, img)
@@ -254,7 +328,7 @@ def make_base_map():
         if p1 is None or p2 is None:
             continue
         width = float(line.get("width", 0.001))
-        thickness = max(2, int(round(width / BOARD_W * VIEW_W * 2.0)))
+        thickness = max(2, int(round(width / SPAN_W * VIEW_W * 2.0)))
         cv2.line(
             img,
             world_to_px(float(p1[0]), float(p1[1])),
@@ -363,12 +437,20 @@ def main():
         default=float(os.environ.get("CYBERRUNNER_CHECKPOINT_RADIUS_M", "0.010")),
         help="Radius around the current checkpoint that counts as a pass.",
     )
+    parser.add_argument(
+        "--reach_warning",
+        action="store_true",
+        help="Flag marble positions outside the physically reachable rectangle. "
+        "Off by default: the check assumes the state origin is exactly the "
+        "playable centre, so a few mm of calibration bias trips it on "
+        "positions that are otherwise correct.",
+    )
     args, ros_args = parser.parse_known_args()
 
     display_hz = max(1.0, args.display_hz)
     frame_period = 1.0 / display_hz
     checkpoint_radius_px = max(
-        1, int(round(max(0.0, args.checkpoint_radius_m) / BOARD_W * VIEW_W))
+        1, int(round(max(0.0, args.checkpoint_radius_m) / SPAN_W * VIEW_W))
     )
 
     rclpy.init(args=ros_args)
@@ -385,6 +467,12 @@ def main():
     print(f"Overlay display limited to {display_hz:.1f} FPS.")
 
     tracked_idx = None
+    # Session extremes, to tell a SCALE error from an ORIGIN OFFSET. Roll the
+    # marble against all four walls: symmetric overshoot on both ends of an axis
+    # means the marker spacing constant for that axis is wrong, while one end
+    # over by d and the other short by d means the dot-quad centroid is offset
+    # from the playable centre by d (i.e. OFFSET is wrong, not the scale).
+    extremes = {"x": [math.inf, -math.inf], "y": [math.inf, -math.inf]}
 
     while rclpy.ok():
         frame_start = time.monotonic()
@@ -438,6 +526,30 @@ def main():
                 panel_lines.append(
                     f"map(lower-left): x={map_x:.3f}, y={map_y:.3f} m"
                 )
+
+                # Flag a position the marble centre cannot physically occupy.
+                # Either the estimate is biased or OFFSET is wrong -- the
+                # corner-dot quad on the map tells you which.
+                for axis, value in (("x", state_x), ("y", state_y)):
+                    extremes[axis][0] = min(extremes[axis][0], value)
+                    extremes[axis][1] = max(extremes[axis][1], value)
+                for axis, reach in (("x", REACH_X), ("y", REACH_Y)):
+                    low, high = extremes[axis]
+                    if math.isfinite(low) and math.isfinite(high):
+                        panel_lines.append(
+                            "%s seen %+.1f..%+.1f vs +-%.1f mm"
+                            % (axis, low * 1000, high * 1000, reach * 1000)
+                        )
+
+                over_x = abs(state_x) - REACH_X
+                over_y = abs(state_y) - REACH_Y
+                if args.reach_warning and (over_x > 0.0 or over_y > 0.0):
+                    worst = "y" if over_y >= over_x else "x"
+                    panel_lines.append(
+                        f"!! UNREACHABLE {worst} by "
+                        f"{max(over_x, over_y) * 1000:.1f} mm"
+                    )
+                    cv2.circle(img, (bx, by), 22, (0, 0, 255), 2)
                 panel_lines.append(f"alpha={float(s.alpha):.3f}, beta={float(s.beta):.3f}")
 
                 if path is not None:
