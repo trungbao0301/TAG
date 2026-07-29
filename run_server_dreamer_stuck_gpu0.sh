@@ -30,7 +30,23 @@ unset TAG_OCCLUSION_ZONES_FILE
 export TAG_REWARD_ON_FAIL=-0.20
 export TAG_TIMEOUT_STEPS=3000
 export TAG_TIMEOUT_PENALTY=-0.20
+# Anti-cheat. The budget is dt-scaled on purpose: allowed advance along the path
+# per step = min(MAX_STEP_M, max(MIN_STEP_M, MAX_SPEED_MPS * step_dt)). Do NOT
+# express "flag a 10 mm skip" as MAX_STEP_M=0.010 -- step_dt here ranges 40-800 ms
+# and the marble legitimately rolls 49 mm in 400 ms (p95 speed 0.122 m/s), so a
+# flat cap fires on real motion. MIN_STEP_M is already the 10 mm floor below which
+# nothing is ever flagged.
+#
+# MAX_SPEED_MPS 1.0 -> 0.3 tightens the normal-frame budget from ~50 mm to ~15 mm
+# (2.5x the measured p95) while still relaxing on slow frames.
 export TAG_ANTICHEAT_MAX_STEP_M=0.057
+export TAG_ANTICHEAT_MIN_STEP_M=0.010
+export TAG_ANTICHEAT_MAX_SPEED_MPS=0.3
+export TAG_ANTICHEAT_CONFIRM_STEPS=5
+# Termination ON: this maze DOES have a reachable shortcut (a 59.5 mm hop across
+# the open centre skips 836 mm of path, 43.6% -> 88.6%), contrary to the older
+# note in env_tcp.py. Credit was already denied for it; this also ends the episode.
+export TAG_ANTICHEAT_ENABLED=1
 export TAG_ANTICHEAT_PENALTY=-0.50
 
 export TAG_STUCK_WINDOW_SEC=5

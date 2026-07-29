@@ -137,17 +137,29 @@ class TagGym(gym.Env):
         # real cheat (marble physically moved) stays at the new spot, so it
         # still trips after this many consecutive steps; a one-frame detector
         # flip reverts and resets the counter.
-        # Anti-cheat TERMINATION is off by default on this board. A wall-crossing
-        # check over all 157 wall segments found no place where the marble can hop
-        # <=60 mm and skip >=50 mm of path: every near-self-approach of the path
-        # (e.g. 81.8% passing 23.5 mm from 46.4%) is blocked by a wall. So a
-        # progress shortcut is physically impossible here and every trigger this
-        # ever produced was a bad state estimate, not a cheat.
+        # CORRECTION: an earlier note here claimed a wall-crossing check over all
+        # 157 wall segments found no reachable shortcut, so a progress skip was
+        # "physically impossible" on this board. Re-running that check against the
+        # current layout (21 holes, 157 walls) does NOT reproduce it: 10,610
+        # near-self-approaches of the path are geometrically unblocked, the worst
+        # being a 59.5 mm hop across the open centre that skips 836 mm of path
+        # (43.6% -> 88.6%). Treat the maze as shortcut-reachable.
         #
-        # Implausible jumps are STILL detected and still denied progress credit,
-        # so a detector glitch cannot earn reward -- it just no longer kills the
-        # episode or applies a penalty. Set TAG_ANTICHEAT_ENABLED=1 to
-        # restore termination (e.g. on a board where shortcuts are reachable).
+        # What actually makes a shortcut unprofitable is the composition of three
+        # mechanisms, none of which suffices alone:
+        #   1. TAG_PATH_TOLERANCE_M (default = ball radius, 6 mm) -- outside that
+        #      corridor _closest_point returns -1 and the reward is 0.
+        #   2. On that -1 branch the reward returns EARLY, so prev_pos_path is left
+        #      unchanged while the marble is off-path.
+        #   3. Therefore the whole skip lands in a single step delta when it
+        #      rejoins, and the per-step budget below rejects it -- 4180 points
+        #      against a ~285-point budget in the worst case. Crossing slowly does
+        #      not evade this, because (2) freezes the reference.
+        #
+        # So credit is denied regardless. Termination is a separate policy choice:
+        # TAG_ANTICHEAT_ENABLED=0 denies credit only, =1 also ends the episode with
+        # TAG_ANTICHEAT_PENALTY. Enabling it is only safe once marble detection is
+        # reliable -- a false strike costs -0.50 against a full-run total of ~2.32.
         self.anti_cheat_enabled = str(
             os.environ.get("TAG_ANTICHEAT_ENABLED", "0")
         ).strip().lower() not in ("0", "false", "no", "off", "")

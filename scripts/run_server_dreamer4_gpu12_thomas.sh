@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "${TAG_ROOT:-$HOME/tag}"
+set +u
+. install/setup.bash
+set -u
+
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-1,2}"
+export TAG_DREAMER4_ENTRY="${TAG_DREAMER4_ENTRY:-dreamer4.train:main}"
+export TAG_DREAMER4_POLICY_DEVICES="${TAG_DREAMER4_POLICY_DEVICES:-0}"
+export TAG_DREAMER4_TRAIN_DEVICES="${TAG_DREAMER4_TRAIN_DEVICES:-0 1}"
+export TAG_DREAMER4_SCRIPT="${TAG_DREAMER4_SCRIPT:-train}"
+export TAG_DREAMER4_TRAIN_RATIO="${TAG_DREAMER4_TRAIN_RATIO:-128}"
+export TAG_TCP_BIND="${TAG_TCP_BIND:-127.0.0.1}"
+export TAG_TCP_PORT="${TAG_TCP_PORT:-5555}"
+
+stamp="$(date +%Y%m%d_%H%M%S)"
+export TAG_THOMAS_DREAMER4_LOGDIR="${TAG_THOMAS_DREAMER4_LOGDIR:-$HOME/tag_logs/thomas_dreamer4_tcp_gpu12_$stamp}"
+
+echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
+echo "TAG_DREAMER4_ENTRY=$TAG_DREAMER4_ENTRY"
+echo "TAG_THOMAS_DREAMER4_LOGDIR=$TAG_THOMAS_DREAMER4_LOGDIR"
+echo "TCP bind: $TAG_TCP_BIND:$TAG_TCP_PORT"
+
+ros2 run tag_dreamer train_tcp_dreamer4_thomas
