@@ -76,8 +76,11 @@ class TcpRosBridge(Node):
         self.reset_cooldown_sec = float(
             os.environ.get("TAG_BALL_LOST_RESET_COOLDOWN", "0.0")
         )
-        self.max_cmd_1 = float(os.environ.get("TAG_MAX_CMD_1", "180"))
-        self.max_cmd_2 = float(os.environ.get("TAG_MAX_CMD_2", "180"))
+        self.max_cmd_1 = float(os.environ.get("TAG_MAX_CMD_1", "300"))
+        self.max_cmd_2 = float(os.environ.get("TAG_MAX_CMD_2", "300"))
+        self.reconnect_backoff_sec = max(
+            0.0, float(os.environ.get("TAG_TCP_RECONNECT_BACKOFF_SEC", "1.0"))
+        )
         self.ball_lost_count = 0
         self.ball_seen_count = 0
         self.last_reset_time = 0.0
@@ -347,6 +350,13 @@ class TcpRosBridge(Node):
                     sock.close()
                 except Exception:
                     pass
+                # Back off before reconnecting. connect_loop() only sleeps when
+                # connect() itself raises, but through the SSH tunnel connect()
+                # always succeeds locally and the failure surfaces on the first
+                # read instead -- so without this the loop spun ~250 times a
+                # second (27% CPU, 830 log lines/sec) whenever no trainer was
+                # listening on the far end.
+                time.sleep(self.reconnect_backoff_sec)
                 sock = self.connect_loop()
 
     def destroy_node(self):

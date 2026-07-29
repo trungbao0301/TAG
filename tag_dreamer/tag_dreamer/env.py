@@ -1,6 +1,6 @@
 import sys
 
-from tag_dreamer import tag_layout
+from tag_dreamer import tag_layout_custom
 from tag_dreamer.path import LinearPath
 
 from tag_interfaces.msg import HiwonderVel, StateEstimateSub
@@ -45,7 +45,7 @@ class TagGym(gym.Env):
     def __init__(
         self,
         repeat=1,
-        layout=tag_layout.tag_hard_layout,
+        layout=tag_layout_custom.tag_dxf_layout,
         num_rel_path=5,
         num_wait_steps=30,
         reward_on_fail=0.0,
@@ -74,7 +74,12 @@ class TagGym(gym.Env):
         #     [0.0, 0.0, -10 * np.pi / 180.0, -10 * np.pi / 180.0] +
         #     [-0.01 * (k + 1) for k in range(self.num_rel_path) for _ in
         #      range(2)])
-        self.norm_max = np.array([10 * np.pi / 180.0, 10 * np.pi / 180.0, 0.276, 0.231])
+        board_size = np.array(
+            [layout["board_width"], layout["board_height"]], dtype=np.float32
+        )
+        self.norm_max = np.array(
+            [10 * np.pi / 180.0, 10 * np.pi / 180.0, *board_size]
+        )
         self.goal_norm_max = np.array(
             [0.0002 * 60 * k for k in range(1, self.num_rel_path + 1) for _ in range(2)]
         )
@@ -99,9 +104,9 @@ class TagGym(gym.Env):
 
         self.repeat = repeat
 
-        self.offset = np.array([0.276, 0.231]) / 2.0
+        self.offset = board_size / 2.0
         shared = get_package_share_directory("tag_dreamer")
-        self.p = LinearPath.load(os.path.join(shared, "path_0002_hard.pkl"))
+        self.p = LinearPath.load(os.path.join(shared, "path_custom.pkl"))
         # if not self.cheat:
         #     self.p = LinearPath.load("path_0002_hard.pkl")
         # else:
@@ -121,7 +126,7 @@ class TagGym(gym.Env):
 
         self.ball_detected = False
 
-        # Hiwonder
+        # Hiwonder servos
         self.max_angle_vel = 80
         self.alpha_fac = -1.0
         self.beta_fac = -1.0
@@ -142,7 +147,7 @@ class TagGym(gym.Env):
 
         self.steps += 1
 
-        # Send action to hiwonder
+        # Send action to dynamixel
         if self.cheat and (self.p.num_points - self.prev_pos_path <= 200):
             action[1] = 1.0
         self._send_action(action)

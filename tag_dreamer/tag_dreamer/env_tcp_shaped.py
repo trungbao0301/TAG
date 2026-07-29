@@ -9,7 +9,7 @@ import gym
 import numpy as np
 from ament_index_python.packages import get_package_share_directory
 
-from tag_dreamer import tag_layout
+from tag_dreamer import tag_layout_custom
 from tag_dreamer.path import LinearPath
 
 
@@ -28,7 +28,7 @@ class TagGym(gym.Env):
     def __init__(
         self,
         repeat=1,
-        layout=tag_layout.tag_hard_layout,
+        layout=tag_layout_custom.tag_dxf_layout,
         num_rel_path=5,
         num_wait_steps=30,
         reward_on_fail=0.0,
@@ -49,14 +49,19 @@ class TagGym(gym.Env):
         self.obs = dict(self.observation_space.sample())
 
         self.num_rel_path = num_rel_path
-        self.norm_max = np.array([10 * np.pi / 180.0, 10 * np.pi / 180.0, 0.276, 0.231])
+        board_size = np.array(
+            [layout["board_width"], layout["board_height"]], dtype=np.float32
+        )
+        self.norm_max = np.array(
+            [10 * np.pi / 180.0, 10 * np.pi / 180.0, *board_size]
+        )
         self.goal_norm_max = np.array(
             [0.0002 * 60 * k for k in range(1, self.num_rel_path + 1) for _ in range(2)]
         )
 
-        self.offset = np.array([0.276, 0.231]) / 2.0
+        self.offset = board_size / 2.0
         shared = get_package_share_directory("tag_dreamer")
-        self.p = LinearPath.load(os.path.join(shared, "path_0002_hard.pkl"))
+        self.p = LinearPath.load(os.path.join(shared, "path_custom.pkl"))
         self.holes = np.asarray(layout.get("holes", []), dtype=np.float32)
         self.waypoint_path_indices = self._make_waypoint_path_indices()
 
@@ -84,11 +89,11 @@ class TagGym(gym.Env):
         )
 
         self.ball_detected = False
-        self.max_angle_vel = float(os.environ.get("TAG_MAX_ANGLE_VEL", "180"))
+        self.max_angle_vel = float(os.environ.get("TAG_MAX_ANGLE_VEL", "300"))
         self.alpha_fac = float(os.environ.get("TAG_ALPHA_FAC", "-1.0"))
         self.beta_fac = float(os.environ.get("TAG_BETA_FAC", "-1.0"))
-        self.max_cmd_1 = float(os.environ.get("TAG_MAX_CMD_1", "180"))
-        self.max_cmd_2 = float(os.environ.get("TAG_MAX_CMD_2", "180"))
+        self.max_cmd_1 = float(os.environ.get("TAG_MAX_CMD_1", "300"))
+        self.max_cmd_2 = float(os.environ.get("TAG_MAX_CMD_2", "300"))
         self.action_repeat = max(1, int(os.environ.get("TAG_ACTION_REPEAT", "1")))
         self.rest_after_sec = float(os.environ.get("TAG_REST_AFTER_SEC", "3600"))
         self.rest_duration_sec = float(
