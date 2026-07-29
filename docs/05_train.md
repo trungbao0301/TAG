@@ -1,6 +1,11 @@
 Train
 =====
 
+> **See [TRAINING.md](TRAINING.md) for the current runbook**, including the
+> TCP/server flow this rig actually uses, the estimator health checks to run
+> before a long training session, and two workspace-resolution traps.
+> The steps below are the original single-machine flow.
+
 1. Open four terminal windows. For each, navigate to the CyberRunner workspace and source the workspace.
 
         cd cyberrunner_ws
