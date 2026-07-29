@@ -17,7 +17,7 @@ This is a slimmed, rebranded workspace (packages use the `tag_` prefix).
  camera ──▶ fast_camera_publisher_v2.py       │        │  DreamerV3 training │
              │  /tag_camera/image             │        │  (dreamerv3.train)  │
              ▼                                │  TCP   │                     │
-        tag_state_estimation (estimator_sub)  │◀──────▶│  gym env tag-ros-v0 │
+        tag_state_estimation(estimator_ai_map)│◀──────▶│  gym env tag-ros-v0 │
              │  /tag_state_estimation/estimate│  5555  └────────────────────┘
              ▼                                │
         tcp_ros_bridge.py ◀───────────────────┘
@@ -92,8 +92,10 @@ ros2 run tag_hiwonder hiwonder_compat_node.py
 **3. State estimation** (detects the marble + board tilt, publishes
 `/tag_state_estimation/estimate`):
 ```bash
-ros2 run tag_state_estimation estimator_sub
+./run_ai_map_estimator.sh
 ```
+Every parameter defaults to its calibrated value, so pass nothing unless you mean
+to override.
 
 **4. Bridge to the training server** (connect to the server's IP; default port
 5555):
@@ -101,9 +103,19 @@ ros2 run tag_state_estimation estimator_sub
 python3 tcp_ros_bridge.py <SERVER_IP> 5555
 ```
 
-> First-time calibration: if the estimator can't find the board corners, set the
-> marker positions once with
-> `ros2 run tag_state_estimation select_markers`.
+> **First-time calibration.** Set the marker positions once with
+> `ros2 run tag_state_estimation select_markers`, then rebuild. Clicks only need
+> to be within ~14 px -- the guard snaps to the true dot centroids on its first
+> frame, so expect the drawn crosses to shift slightly.
+>
+> Sanity-check the estimator before a long run; a bad one trains a bad policy and
+> fails quietly:
+> ```bash
+> ros2 topic hz /tag_state_estimation/estimate         # want ~40 Hz
+> ros2 topic echo /tag_state_estimation/status --once   # want: valid
+> ```
+> Camera intrinsics and marker geometry have their own tools -- see
+> [`tag_state_estimation/AI_MAP_ESTIMATOR.md`](tag_state_estimation/AI_MAP_ESTIMATOR.md).
 
 ---
 
@@ -227,21 +239,24 @@ real-world hours). Also useful: losses and `fps`.
 
 ---
 
-## AI marble detector (optional)
+## State estimation
 
-An optional learned detector augments the HSV estimator during pendulum-arm
-occlusion, reflections, holes, blue markers, and off-board false detections. It
-**never controls motors** — it only produces a marble pixel/confidence or assists
-the estimator through guarded fusion + Kalman prediction. Default mode is `off`
-(pure HSV); `shadow` runs diagnostics only; `hybrid` is AI-authoritative.
+The marble is found by a learned ONNX detector (`models/marble_detector.onnx`).
+HSV is used *only* to track the eight blue reference dots -- four on the fixed
+outer frame, four on the moving plate -- and never as a marble fallback. The
+moving dots give a fresh pixel-to-metres homography every frame, so the map
+follows the plate as it tilts; the fixed dots give the world reference the tilt
+angles are measured against.
 
-📄 **See [`tag_state_estimation/AI_MARBLE_DETECTOR.md`](tag_state_estimation/AI_MARBLE_DETECTOR.md)** for
-modes, the stride-4 training command, safe shadow/hybrid/rollback commands, and
-validation caveats. Model: `models/marble_detector.onnx`.
+📄 **See [`tag_state_estimation/AI_MAP_ESTIMATOR.md`](tag_state_estimation/AI_MAP_ESTIMATOR.md)**
+for the topic list, the three calibrations (markers, camera intrinsics, marker
+geometry) with their accept/reject thresholds, and a status-code troubleshooting
+table.
 
-> Do not enable `hybrid` on the robot until shadow-mode acceptance criteria pass.
-
----
+The older HSV pipeline (`estimator`, `estimator_sub`) and its omnidirectional
+camera model have been removed -- that calibration described a 1920x1200 capture
+while this camera runs 1280x720, which inflated the effective focal length 2.26x
+and scaled every reported angle. Recover it from git history if ever needed.
 
 ## Configuration (environment variables)
 

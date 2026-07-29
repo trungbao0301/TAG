@@ -26,7 +26,11 @@ def generate_launch_description():
             DeclareLaunchArgument("border_y", default_value="20"),
             DeclareLaunchArgument("pipeline_fps", default_value="55.0"),
             DeclareLaunchArgument("process_every_n", default_value="1"),
-            DeclareLaunchArgument("estimator_executable", default_value="estimator_sub"),
+            # The AI-map estimator is the supported one; the HSV/ocam pipeline
+            # (estimator_sub) has been removed.
+            DeclareLaunchArgument(
+                "estimator_executable", default_value="estimator_ai_map"
+            ),
             Node(
                 package="tag_camera",
                 executable="cam_publisher.py",

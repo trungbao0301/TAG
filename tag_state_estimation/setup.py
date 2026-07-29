@@ -10,8 +10,9 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
-        ("share/" + package_name, glob("calib/*.txt")),
         ("share/" + package_name, ["markers.csv"]),
+        # Optional: written by tools/calibrate_camera_holes.py, absent until run.
+        ("share/" + package_name, glob("pinhole_calib.json")),
         #("share/" + package_name, "rviz/config.rviz"),
     ],
     install_requires=["setuptools"],
@@ -23,12 +24,13 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "estimator = tag_state_estimation.tag_state_estimation_node:main",
-            "estimator_sub = tag_state_estimation.tag_state_estimation_subimg:main",
             "select_markers = tag_state_estimation.select_markers:main",
             "ai_labeler = tag_state_estimation.ai_dataset_labeler:main",
             "ai_train = tag_state_estimation.train_ai_marble:main",
             "ai_detector = tag_state_estimation.ai_marble_detector_node:main",
+            "estimator_ai_map = tag_state_estimation.ai_map_estimator_node:main",
+            "ai_hole_viewer = tag_state_estimation.ai_hole_mask_viewer:main",
+            "pendulum_zone_selector = tag_state_estimation.pendulum_zone_selector:main",
         ],
     },
 )

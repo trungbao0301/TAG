@@ -1,9 +1,9 @@
+import json
 import os
 import cv2
 import numpy as np
 from ament_index_python.packages import get_package_share_directory
 
-from tag_state_estimation.utils.ocam_model import OcamModel
 
 colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 255, 255)]
 c_name = ["blue", "green", "red", "yellow"]
@@ -12,80 +12,96 @@ c_name = ["blue", "green", "red", "yellow"]
 class PlatePoseEstimator:
 
     # constants
-    L_EXT_INT_X = 0.317
+    L_EXT_INT_X = 0.305  # measured outer frame span along x
     L_EXT_INT_Y = 0.274
-    C2C_X = 0.269  # moving-marker center spacing along x
-    C2C_Y = 0.237  # moving-marker center spacing along y
-    H_BORDERS = 0.026  # marker plane height above the marble surface
+    # Fitted from 40 tilted views / 745 hole observations by
+    # tools/fit_marker_geometry.py, NOT the ETH original's 0.269 x 0.237. Those
+    # were inherited nominal values for different hardware; this board runs a
+    # custom maze. Profiling the dot-plane height h against the known DXF hole
+    # positions gives a clear minimum at h = 10 mm (median residual 2.13 mm at
+    # h=0, 1.49 mm at h=10, 1.92 mm at h=20), independently reproducing a 1 cm
+    # ruler measurement, and at that optimum the spacing is 249.2 x 222.3 mm.
+    # Median hole residual improves 5.67 -> 1.49 mm versus the old constants.
+    C2C_X = 0.2492  # moving-marker center spacing along x
+    C2C_Y = 0.2223  # moving-marker center spacing along y
 
     r = 0.008 / 2
     R_BALL = 0.012 / 2
-    edge_width = 7.5e-3  # to check
+
+    # Inset of the four fixed frame dots from the top/bottom of L_EXT_INT_Y.
+    # Solved from markers.csv: the undistorted dots have an x/y span ratio of
+    # 1.6357, so an x span of L_EXT_INT_X + 2r = 313.0 mm implies a y span of
+    # 191.4 mm, i.e. an inset of (274 - 191.4) / 2. The previous 0.05 guess
+    # made the span ratio 1.868, which drove camera_localization() into a wrong
+    # PnP minimum (camera at x=0.015 m instead of 0.151 m) and biased the
+    # resting plate angles by about -10 deg in beta.
+    FIXED_DOT_INSET_Y = 0.0413
 
     MODEL_POINTS_FIXED_CORNERS = np.array(
         [
-            (-r, 0.05, 0),  # Corner 1
-            (L_EXT_INT_X + r, 0.05, 0),  # Corner 2
-            (L_EXT_INT_X + r, L_EXT_INT_Y - 0.05, 0),  # Corner 3
-            (-r, L_EXT_INT_Y - 0.05, 0),  # Corner 4
+            (-r, FIXED_DOT_INSET_Y, 0),  # Corner 1
+            (L_EXT_INT_X + r, FIXED_DOT_INSET_Y, 0),  # Corner 2
+            (L_EXT_INT_X + r, L_EXT_INT_Y - FIXED_DOT_INSET_Y, 0),  # Corner 3
+            (-r, L_EXT_INT_Y - FIXED_DOT_INSET_Y, 0),  # Corner 4
         ],
         dtype=np.float32,
     )
 
-    # 3D model points of corners (center of circles) in maze frame {M}
-    MODEL_POINTS_CORNERS = np.array(
-        [
-            [-C2C_X / 2, -C2C_Y / 2, H_BORDERS],  # Corner 1 (dl)
-            [+C2C_X / 2, -C2C_Y / 2, H_BORDERS],  # Corner 2 (dr)
-            [+C2C_X / 2, +C2C_Y / 2, H_BORDERS],  # Corner 3 (ur)
-            [-C2C_X / 2, +C2C_Y / 2, H_BORDERS],  # Corner 4 (ul)
-        ],
-        dtype=np.float32,
-    )
-
-    MAZE_CORNERS__M = np.array(
-        [  # only use for 3d ploting
-            [-C2C_X / 2 + edge_width / 2, -C2C_Y / 2 + edge_width / 2, 0],
-            [+C2C_X / 2 - edge_width / 2, -C2C_Y / 2 + edge_width / 2, 0],
-            [+C2C_X / 2 - edge_width / 2, +C2C_Y / 2 - edge_width / 2, 0],
-            [-C2C_X / 2 + edge_width / 2, +C2C_Y / 2 - edge_width / 2, 0],
-        ]
-    )
+    # Fallback pinhole intrinsics, used only when pinhole_calib.json is absent.
+    #
+    # This class used to run every point through an OcamModel built from
+    # calib_results_tag.txt. That file describes a 1920x1200 capture
+    # while the pipeline runs 1280x720 downscaled to 640x400, so the polynomial
+    # did not transfer. Measured on markers.csv, the ocam pass changed the dot
+    # spacing by 1.93x and left both aspect ratios identical to four decimal
+    # places -- no shape correction at all, only a wrong magnification. And
+    # because get_pose_T__C_P solvePnPs with the same f that the reprojection
+    # used, f cancelled and the effective focal length became the polynomial's
+    # on-axis 673.2 px instead of the true ~298, putting the camera at 0.556 m
+    # rather than a ruler-measured 0.290 m and scaling every derived angle by
+    # 2.26x. No rescale of that file fixes it: OcamModel.scale is
+    # angle-preserving, and scaling its coefficients is algebraically just a
+    # change of f. The model and its calibration file are therefore gone.
+    #
+    # FALLBACK_PRINCIPAL_POINT is the frame centre. The retired calibration's
+    # own centre, scaled by 3, was row 199.6 / col 319.6 -- within 0.4 px --
+    # because the 16:10 -> 16:9 crop drops 60 rows per side, which is 20 rows
+    # after /3, exactly the border fast_camera_publisher_v2.py adds back.
+    FALLBACK_FOCAL_PX = 300.0
+    FALLBACK_PRINCIPAL_POINT = (320.0, 200.0)  # (column, row) for a 640x400 frame
 
     def __init__(self, print_details: bool = False):
         self.print_details = print_details
 
+        cx, cy = PlatePoseEstimator.FALLBACK_PRINCIPAL_POINT
+        self.f = PlatePoseEstimator.FALLBACK_FOCAL_PX
+        self.K = np.array([[self.f, 0, cx], [0, self.f, cy], [0, 0, 1]])
+        self.dist = None
+        self.calib_path = None
+
+        # pinhole_calib.json, written by tools/calibrate_camera_holes.py, is the
+        # real calibration and supersedes the fallback above.
         share = get_package_share_directory("tag_state_estimation")
-        o = OcamModel(os.path.join(share, "calib_results_tag.txt"))
-        o.scale(3)  # From 1920 to 640 res
-        self.o = o
-        xc, yc = o.xc, o.yc
-        self.f = 300
-        self.K_ocam = np.array([[-self.f, 0, xc], [0, -self.f, yc], [0, 0, 1]])
-        self.K = np.array([[+self.f, 0, yc], [0, +self.f, xc], [0, 0, 1]])
+        calib_path = os.path.join(share, "pinhole_calib.json")
+        if os.path.isfile(calib_path):
+            with open(calib_path) as handle:
+                calib = json.load(handle)
+            self.K = np.array(
+                [
+                    [calib["fx"], 0.0, calib["cx"]],
+                    [0.0, calib["fy"], calib["cy"]],
+                    [0.0, 0.0, 1.0],
+                ]
+            )
+            dist = np.asarray(calib.get("dist", []), dtype=np.float64).reshape(1, -1)
+            self.dist = dist if dist.size and np.any(dist) else None
+            self.f = float(calib["fx"])
+            self.calib_path = calib_path
 
         self.T__W_M = None
         self.T__W_C = None
         self.img_points_corners_undist = None
         self.img_points_fixed_corners_undist = None
-
-    def estimate_anglesXY(self, corners_undist):  # (x,y)
-        """
-        Compute the angles (Euler XYZ) that describe the orientation of the maze frame {m} wrt to the world frame {w}.
-
-        Args :
-            corners_undist: np.ndarray, dim: (4,2)
-                            undistorted image coordinates of the maze corners dots in (x,y) = (line, column) convention.
-        Returns :
-            alpha: float
-                    angle around +X axis
-            beta: float
-                    angle around +Y axis
-        """
-        self.img_points_corners_undist = corners_undist
-        self.T__W_M = self.get_maze_pose_in_world(self.img_points_corners_undist)
-        alpha, beta = self.getXYAnglesFrom_R__W_M(self.T__W_M[:3, :3], deg=False)
-        return alpha, beta
 
     def get_pose_T__C_P(
         self, model_points: np.ndarray, img_points: np.ndarray, print_=False
@@ -128,25 +144,6 @@ class PlatePoseEstimator:
         T__C_P = np.vstack((T__C_P, np.array([0, 0, 0, 1])))
         return T__C_P, R__C_P, P__C
 
-    def get_maze_pose_in_world(self, image_points):
-        """
-        Compute the pose of the maze {m} wrt to the world frame {w}.
-
-        Args :
-            image_points: np.ndarray, dim: (4,2)
-                           undistorted image coordinates of the maze corners dots in (x,y) = (line, column) convention.
-
-        Returns :
-           T_inv: np.ndarray, dim: (4,4)
-                  inverse of the matrix T in SE(3)
-        """
-        T__C_M, _, _ = self.get_pose_T__C_P(
-            PlatePoseEstimator.MODEL_POINTS_CORNERS, image_points
-        )
-        self.T__C_M = T__C_M
-        T__W_M = self.T__W_C @ T__C_M
-        return T__W_M
-
     def invert_pose(self, T):
         """
         Compute the inverse of the matrix T [4x4] in SE(3).
@@ -186,7 +183,7 @@ class PlatePoseEstimator:
 
     def undistort_points(self, img_points_raw: np.ndarray):  # (x,y)
         """
-        Undistort the points using the camera calibration data via cam2world.
+        Remove lens distortion, staying in the same K so solvePnP is dist-free.
 
         Args :
             img_points_raw:    np.ndarray, dim: (N,2)
@@ -196,48 +193,13 @@ class PlatePoseEstimator:
                                image coordinates of the undistorted points in (x,y) = (line, column) convention.
 
         """
-        P_w = self.o.cam2world(img_points_raw).T  # dim: (3, N)
-        pt_undist = self.K_ocam @ P_w  # dim: (3, N)
-        pt_undist = pt_undist / pt_undist[2, :]
-        img_point_undist = pt_undist.T[:, :2]
-        return img_point_undist
-
-    def estimate_maze_corners__W(self):  # used only for plotting
-        """
-        Estimate the coordinates of the corners of the maze (not the detection dots but the real corners of maze,
-        i.e. the limits maze) in the world frame {w}. Useful for plotting only.
-
-        Returns :
-            Ps__W:  np.ndarray, dim: (4,3)
-                    coordinates of the corners of the maze in the world frame {w}.
-
-        """
-        Ps__M = PlatePoseEstimator.MAZE_CORNERS__M.T
-        Ps__W = (self.T__W_M @ np.vstack((Ps__M, np.ones(4))))[:-1, :]
-        Ps__W = Ps__W.T
-        return Ps__W
-
-    def camera_localization(self, img_fix_pts):
-        """
-        Estimate the pose of camera {c} wrt the world frame {w}: T__W_C (also noted T^W_C).
-
-        Args:
-           img_fix_pts: np.ndarray, dim: (4,2)
-                        the raw image coordinates of the four fixed reference dots of the external frame of the labyrinth
-                        in (x,y) = (line, column) convention.
-
-        """
-        self.img_points_fixed_corners_undist = self.undistort_points(
-            img_fix_pts
-        )  # (x,y)
-        print("camera localization: getting T__C_W")
-        T__C_W, _, _ = self.get_pose_T__C_P(
-            PlatePoseEstimator.MODEL_POINTS_FIXED_CORNERS,
-            self.img_points_fixed_corners_undist,
-        )
-        self.T__C_W = T__C_W
-        self.T__W_C = self.invert_pose(T__C_W)
-        np.set_printoptions(precision=3)
-        print("T^W_C:")
-        print(self.T__W_C)
-        print(("\n"))
+        points = np.asarray(img_points_raw, dtype=np.float64).reshape(-1, 2)
+        if self.dist is None:
+            # No measured distortion (no pinhole_calib.json): the raw pixels
+            # already are the undistorted pixels and self.K carries the
+            # principal point, so this is deliberately a no-op.
+            return points.copy()
+        undistorted = cv2.undistortPoints(
+            np.flip(points, axis=1).reshape(-1, 1, 2), self.K, self.dist, P=self.K
+        ).reshape(-1, 2)
+        return np.flip(undistorted, axis=1)  # back to (row, column)

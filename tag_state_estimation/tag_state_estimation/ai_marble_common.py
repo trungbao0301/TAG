@@ -27,9 +27,22 @@ def sigmoid(value):
 
 
 def decode_heatmap(
-    logits, image_width, image_height, threshold=0.90, valid_roi=None
+    logits,
+    image_width,
+    image_height,
+    threshold=0.90,
+    valid_roi=None,
+    exclude_centers_px=None,
+    exclude_radius_px=0.0,
 ):
-    """Decode a 1x1xHxW or HxW heatmap into a source-image position."""
+    """Decode a 1x1xHxW or HxW heatmap into a source-image position.
+
+    exclude_centers_px: iterable of (x_px, y_px) in SOURCE-image coordinates to
+    suppress, each within exclude_radius_px. Used to mask the blue corner dots,
+    which look like the marble but sit at the same image rows as a marble
+    travelling along the top or bottom edge -- so a rectangular ROI alone cannot
+    separate them.
+    """
     heatmap = np.asarray(logits, dtype=np.float32).squeeze()
     if heatmap.ndim != 2:
         raise ValueError(f"Expected a 2-D heatmap, got shape {heatmap.shape}")
@@ -47,6 +60,21 @@ def decode_heatmap(
             & (y_norm <= y_max)
         )
         heatmap = np.where(allowed, heatmap, -1.0e9)
+    if exclude_centers_px is not None and exclude_radius_px > 0.0:
+        centers = np.asarray(exclude_centers_px, dtype=np.float32).reshape(-1, 2)
+        if len(centers):
+            # Work in heatmap cells; the heatmap is coarser than the source image.
+            scale_x = heatmap.shape[1] / float(image_width)
+            scale_y = heatmap.shape[0] / float(image_height)
+            yy, xx = np.mgrid[: heatmap.shape[0], : heatmap.shape[1]]
+            blocked = np.zeros(heatmap.shape, dtype=bool)
+            for cx_px, cy_px in centers:
+                if not (np.isfinite(cx_px) and np.isfinite(cy_px)):
+                    continue
+                dx = (xx - cx_px * scale_x) / max(scale_x, 1e-9)
+                dy = (yy - cy_px * scale_y) / max(scale_y, 1e-9)
+                blocked |= (dx * dx + dy * dy) <= exclude_radius_px ** 2
+            heatmap = np.where(blocked, -1.0e9, heatmap)
     probabilities = sigmoid(heatmap)
     flat_index = int(np.argmax(probabilities))
     y_cell, x_cell = np.unravel_index(flat_index, probabilities.shape)
@@ -93,7 +121,12 @@ class OnnxMarbleDetector:
             self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
             self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 
-    def detect(self, frame):
+    def detect(self, frame, valid_roi=None, exclude_centers_px=None,
+               exclude_radius_px=0.0):
+        """Run the detector. `valid_roi` overrides the configured ROI for this
+        frame only, which lets a caller track a moving board instead of relying
+        on a rectangle fixed in image space. `exclude_centers_px` suppresses
+        specific spots (e.g. the blue corner dots)."""
         height, width = frame.shape[:2]
         blob = cv2.dnn.blobFromImage(
             frame,
@@ -110,5 +143,7 @@ class OnnxMarbleDetector:
             image_width=width,
             image_height=height,
             threshold=self.confidence_threshold,
-            valid_roi=self.valid_roi,
+            valid_roi=self.valid_roi if valid_roi is None else valid_roi,
+            exclude_centers_px=exclude_centers_px,
+            exclude_radius_px=exclude_radius_px,
         )

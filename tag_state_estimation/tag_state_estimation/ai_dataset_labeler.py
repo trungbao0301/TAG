@@ -1,4 +1,4 @@
-"""Passive ROS2 camera labeler for the CyberRunner marble dataset."""
+"""Passive ROS2 camera labeler for the TAG marble dataset."""
 
 import csv
 from datetime import datetime, timezone
