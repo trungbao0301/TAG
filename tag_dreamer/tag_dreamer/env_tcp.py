@@ -248,9 +248,9 @@ class TagGym(gym.Env):
         self.off_path_confirm_steps = max(
             1, int(os.environ.get("TAG_OFFPATH_CONFIRM_STEPS", "2"))
         )
-        self.off_path_penalty = float(
-            os.environ.get("TAG_OFFPATH_PENALTY", str(self.reward_on_fail))
-        )
+        # Defaulted against reward_on_fail below, so it is resolved there rather
+        # than here where that attribute does not exist yet.
+        self._off_path_penalty_env = os.environ.get("TAG_OFFPATH_PENALTY")
         # A detector flip reverts within a frame or two; a real hop does not.
         # After this many consecutive denials the new position is adopted as the
         # scoring reference, still without credit, so one bad jump cannot mute
@@ -278,6 +278,13 @@ class TagGym(gym.Env):
         self.num_wait_steps = num_wait_steps
         self.reward_on_fail = float(
             os.environ.get("TAG_REWARD_ON_FAIL", str(reward_on_fail))
+        )
+        # Leaving the corridor is a failure like losing the marble, so it costs
+        # the same unless TAG_OFFPATH_PENALTY says otherwise.
+        self.off_path_penalty = float(
+            self._off_path_penalty_env
+            if self._off_path_penalty_env is not None
+            else self.reward_on_fail
         )
         self.reward_on_goal = reward_on_goal
         self.timeout_steps = max(
