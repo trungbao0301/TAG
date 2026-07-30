@@ -40,6 +40,26 @@ export TAG_OCCLUSION_XY_ZONES=""
 export TAG_OCCLUSION_CHECKPOINT_RANGES=""
 unset TAG_OCCLUSION_ZONES_FILE
 
+# How far off the path line the marble may be and still be given a progress
+# index. This defaults to ball_radius (6 mm), which turns out to be the single
+# biggest throttle on the reward signal: measured over 242664 recorded marble
+# positions the distance to the nearest path point is 5.5 mm (p50) but 10.7 mm
+# (p90), so 6 mm scores only 52.6% of frames. The other 47.4% get no progress
+# credit AND a zeroed goal vector, i.e. no steering hint either. The
+# precomputed grid inside path_custom.pkl is meant to cover the corridor and
+# would make this moot, but it returns a valid index for only 5.5% of real
+# positions, so this tolerance is carrying the whole lookup.
+#
+# 9 mm is the provable ceiling, not a guess. If the marble is within T of path
+# point A and the truly nearest point is B, then |A-B| <= 2T. An exhaustive
+# scan of all 9294 path points found no pair closer than 20 mm that is more
+# than 150 indices apart, so T < 10 mm bounds any misattribution to 150
+# indices, i.e. 30 mm of path. 9 mm keeps a margin below that boundary and was
+# checked against 8000 real positions: zero of them had two corridors more than
+# 150 indices apart both within 9 mm. Raising it further is not safe -- at
+# 10 mm two corridors 20 mm apart can tie.
+export TAG_PATH_TOLERANCE_M=0.009
+
 # Penalty for losing the marble down a hole. Sized against the reward scale: the
 # full path is worth only 9294 pts * 0.004/16 = 2.324, so -0.20 was 8.6% of a
 # perfect run and needed 160 mm of path to earn back. At the ~3% progress reached
