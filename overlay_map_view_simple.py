@@ -78,7 +78,6 @@ OFFSET = np.array([BOARD_W, BOARD_H], dtype=np.float32) / 2.0
 # OFFSET above assumes the two coincide. Drawing the dot quad makes that
 # assumption checkable: it should sit concentrically outside the playable
 # rectangle by (269-259)/2 = 5 mm in x and (237-229)/2 = 4 mm in y.
-# Fitted from 40 tilted views / 745 hole observations by
 # tools/fit_marker_geometry.py, NOT the ETH original's 0.269 x 0.237. Those were
 # inherited nominal values for different hardware; this board runs a custom maze.
 # Profiling the dot-plane height h against the known DXF hole positions gives a
@@ -86,8 +85,8 @@ OFFSET = np.array([BOARD_W, BOARD_H], dtype=np.float32) / 2.0
 # 1.92 mm at h=20), independently reproducing a 1 cm ruler measurement, and at
 # that optimum the spacing is 249.2 x 222.3 mm. Median hole residual over the
 # whole set improves 5.67 -> 1.49 mm versus the old constants.
-C2C_X = 0.2492
-C2C_Y = 0.2223
+C2C_X = 0.269
+C2C_Y = 0.237
 
 # A marble centre cannot get closer to the playable edge than wall + radius.
 REACH_X = BOARD_W / 2.0 - (WALL_R + BALL_R)

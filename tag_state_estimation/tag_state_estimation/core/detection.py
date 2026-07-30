@@ -455,10 +455,44 @@ class Detector:
         self.corners = corners
         return corners
 
+    # A marker dot and the MARBLE are indistinguishable by colour: the marble's
+    # HSV band (H 60-116, S 162-255, V 50-243) lies entirely inside the corner
+    # band (H 43-140, S 125-255, V 9-255), so a marble rolling into a corner's
+    # search window satisfies the colour test completely and can be tracked as
+    # that dot -- one real cause of "it detected the wrong marker".
+    #
+    # Size separates them cleanly. Measured over 1653 dot and 200 marble blobs on
+    # live frames: dots 42-65 px2 (median 50), marble 125-130 px2 (median 128).
+    # The distributions do not overlap, so discarding blobs above the midpoint
+    # cannot lose a dot but always rejects the marble.
+    CORNER_BLOB_MAX_PX2 = 90.0
+    CORNER_BLOB_MIN_PX2 = 8.0
+
+    def _keep_dot_sized(self, mask):
+        """Zero out mask components that are not dot-sized.
+
+        Deliberately returns an EMPTY mask when nothing is dot-sized, rather than
+        falling back to the unfiltered one. Falling back would defeat the whole
+        point in the case that matters most -- the marble alone in the window --
+        and reporting not-found is the correct outcome there: the guard holds, and
+        find_marker_quad_global recovers the quad by shape if the loss persists.
+        """
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+        if count < 2:
+            return mask
+        keep = np.zeros(count, dtype=bool)
+        for index in range(1, count):
+            area = float(stats[index, cv2.CC_STAT_AREA])
+            keep[index] = (
+                Detector.CORNER_BLOB_MIN_PX2 <= area <= Detector.CORNER_BLOB_MAX_PX2
+            )
+        return np.where(keep[labels], mask, 0).astype(mask.dtype)
+
     def detect_corner(self, sub_im: np.ndarray, i: int, coords_ul_sub_im: np.ndarray):
         sub_masked, mask = masking.mask_hsv(
             sub_im, self.hsv_params_corners, self.acceleration_backend
         )
+        mask = self._keep_dot_sized(mask)
         c_local, found = gaussian_robust.detect_gaussian(
             mask, i, self.q_corners, self.th_corners, show_sub=self.show_subimages
         )

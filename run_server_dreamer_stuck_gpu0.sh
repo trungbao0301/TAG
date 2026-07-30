@@ -27,7 +27,14 @@ export TAG_OCCLUSION_XY_ZONES=""
 export TAG_OCCLUSION_CHECKPOINT_RANGES=""
 unset TAG_OCCLUSION_ZONES_FILE
 
-export TAG_REWARD_ON_FAIL=-0.20
+# Penalty for losing the marble down a hole. Sized against the reward scale: the
+# full path is worth only 9294 pts * 0.004/16 = 2.324, so -0.20 was 8.6% of a
+# perfect run and needed 160 mm of path to earn back. At the ~3% progress reached
+# early in training that made EVERY episode return negative no matter how well the
+# marble played, which is what the -0.16..-0.20 returns in the log showed. -0.05 is
+# 2.2% of a full run (40 mm of path) and leaves an early episode net positive, so
+# progress reward can actually drive learning.
+export TAG_REWARD_ON_FAIL=-0.05
 export TAG_TIMEOUT_STEPS=3000
 export TAG_TIMEOUT_PENALTY=-0.20
 # Anti-cheat. The budget is dt-scaled on purpose: allowed advance along the path
@@ -41,12 +48,19 @@ export TAG_TIMEOUT_PENALTY=-0.20
 # (2.5x the measured p95) while still relaxing on slow frames.
 export TAG_ANTICHEAT_MAX_STEP_M=0.057
 export TAG_ANTICHEAT_MIN_STEP_M=0.010
-export TAG_ANTICHEAT_MAX_SPEED_MPS=0.3
+# MEASURED, do not tighten without re-checking: live single steps reach 21-31 mm
+# in 35-45 ms, i.e. 0.6-0.7 m/s. The "p95 0.122 m/s" figure in env_tcp.py is stale
+# for this board. At 0.3 m/s this produced 17 false triggers in 100 s and killed
+# every episode at ~30 steps with the -0.50 penalty. 1.0 m/s is the known-good
+# value; revisit only after marble detection is reliable.
+export TAG_ANTICHEAT_MAX_SPEED_MPS=1.0
 export TAG_ANTICHEAT_CONFIRM_STEPS=5
-# Termination ON: this maze DOES have a reachable shortcut (a 59.5 mm hop across
-# the open centre skips 836 mm of path, 43.6% -> 88.6%), contrary to the older
-# note in env_tcp.py. Credit was already denied for it; this also ends the episode.
-export TAG_ANTICHEAT_ENABLED=1
+# Termination OFF. The maze does have a reachable shortcut (a 59.5 mm hop across
+# the open centre skips 836 mm of path, 43.6% -> 88.6%), but credit for it is
+# already denied by the corridor + frozen prev_pos_path + per-step budget. Turning
+# termination on while marble detection sits near 40% valid just charges -0.50 for
+# camera faults. Set to 1 once detection is fixed.
+export TAG_ANTICHEAT_ENABLED=0
 export TAG_ANTICHEAT_PENALTY=-0.50
 
 export TAG_STUCK_WINDOW_SEC=5

@@ -21,6 +21,7 @@ from tag_state_estimation.ai_marble_common import OnnxMarbleDetector
 from tag_state_estimation.core.ai_map_state import (
     AlphaBetaKinematics,
     MarkerQuadGuard,
+    find_marker_quad_global,
     MOVING_MARKERS_CENTERED_M,
     map_ai_pixel,
     marker_quad_valid,
@@ -100,19 +101,14 @@ class AiMapEstimatorNode(Node):
         # map_ai_pixel homographies the RAW dot pixels -- but alpha/beta come
         # from that PnP and may carry a scale-induced bias.
         self.declare_parameter("camera_height_m", 0.29)
-        # Height of the moving-dot plane above the play surface: 10 mm.
+        # Height of the moving-dot plane above the play surface: 10 mm, MEASURED on
+        # this board. The dots sit on the moving rim, which stands above the maze
+        # floor, so the marble centre (6 mm up) is 4 mm BELOW the dot plane and
+        # map_ai_pixel's parallax term pushes positions outward rather than inward.
         #
-        # Confirmed two independent ways. A ruler read 1 cm. Separately,
-        # tools/fit_marker_geometry.py profiled it against the known DXF hole
-        # positions over 40 tilted views and 745 hole observations, finding a
-        # clear minimum -- median residual 2.13 mm at h=0, 1.49 mm at h=10,
-        # 1.92 mm at h=20 -- with no knowledge of the ruler.
-        #
-        # Tilt is what makes this identifiable at all. The parallax correction is
-        # centred on the CAMERA's position in the board frame, which swept
-        # 99 x 90 mm across those views, whereas a dot-spacing error always
-        # scales about the board origin. From a single near-level frame the two
-        # are algebraically degenerate and h cannot be recovered.
+        # Do not re-fit this jointly with the dot spacing: that fit is discredited
+        # (see MOVING_MARKER_SPACING_X_M) and the two parameters are correlated, so
+        # its estimate of this one is worthless too.
         self.declare_parameter("marker_plane_height_m", 0.010)
         self.declare_parameter("marble_radius_m", 0.006)
         self.declare_parameter("corner_mask_radius_px", 12.0)
@@ -128,6 +124,7 @@ class AiMapEstimatorNode(Node):
         self.declare_parameter("fixed_marker_max_speed_px_s", 100.0)
         self.declare_parameter("moving_marker_max_speed_px_s", 300.0)
         self.declare_parameter("marker_acquire_radius_px", 14.0)
+        self.declare_parameter("moving_recover_after_frames", 20)
         # Publish on /tag_state_estimation/* by default: this node is now
         # THE estimator, and every consumer already listens there --
         # overlay_map_view_simple, tag_dreamer's env.py (estimate_subimg),
@@ -180,11 +177,22 @@ class AiMapEstimatorNode(Node):
             corner_subimage_half_size=12,
             ai_mode="off",
         )
-        self.moving_tracker = Detector(markers[4:], ai_mode="off")
+        # half_size 12, not the Detector default of 25. Measured on live frames:
+        # with a +-25 px window the raw moving tracker wanders up to 84.7 px from
+        # its calibrated seeds (median 28.4), because a wider window admits
+        # neighbouring blue blobs. At +-12 px -- what the fixed tracker already
+        # uses -- it stays within 6.5 px while still finding all four dots 100% of
+        # the time.
+        self.moving_tracker = Detector(
+            markers[4:], ai_mode="off", corner_subimage_half_size=12
+        )
         initial_fixed_rc = np.asarray(markers[:4], dtype=np.float64)[:, ::-1]
         initial_moving_rc = np.asarray(markers[4:], dtype=np.float64)[:, ::-1]
         grace = float(self.get_parameter("marker_occlusion_grace_sec").value)
         acquire_radius = float(self.get_parameter("marker_acquire_radius_px").value)
+        self.moving_recover_after_frames = max(
+            1, int(self.get_parameter("moving_recover_after_frames").value)
+        )
         self.fixed_guard = MarkerQuadGuard(
             initial_fixed_rc,
             mode="fixed",
@@ -203,6 +211,9 @@ class AiMapEstimatorNode(Node):
             ),
             acquire_radius_px=acquire_radius,
         )
+        # Frames of continuous moving-quad failure before falling back to a global
+        # shape-matched search. See _recover_moving_quad.
+        self.moving_fail_frames = 0
         self.pose = PlatePoseEstimator()
         self.T_world_camera = None
         self.kinematics = AlphaBetaKinematics(
@@ -264,6 +275,32 @@ class AiMapEstimatorNode(Node):
             f"marble=AI only; markers=fixed 4 + moving 4 from {marker_path} "
             f"(mtime {time.ctime(os.path.getmtime(marker_path))})"
         )
+
+    def _recover_moving_quad(self, frame):
+        """Break a moving-quad lock-up with a global, shape-matched search.
+
+        The tracker only looks in a small window around its last accepted position,
+        and the estimator feeds the guard's output back into it -- so once that
+        position is stale, the search is aimed at the wrong place and the quad can
+        never be recovered. Observed live as moving_markers_timeout on 1550 of 1556
+        frames while all four dots were detectable and the marble detector sat at
+        0.995 confidence; only restarting the node cleared it.
+
+        Runs only after sustained failure, not per frame, because it thresholds the
+        whole image and searches blob combinations.
+        """
+        if self.moving_fail_frames < self.moving_recover_after_frames:
+            return None
+        self.moving_fail_frames = 0
+        found = find_marker_quad_global(frame, self.moving_guard.anchor)
+        if found is None:
+            return None
+        self.moving_guard.reseed(found)
+        self.get_logger().warn(
+            "moving marker quad re-acquired by global shape match "
+            "after %d failed frames" % self.moving_recover_after_frames
+        )
+        return found
 
     def _update_camera_reference(self, fixed_rc):
         valid, _ = marker_quad_valid(fixed_rc, min_area_px2=5_000.0)
@@ -351,6 +388,15 @@ class AiMapEstimatorNode(Node):
         moving_rc, moving_valid, moving_status = self.moving_guard.update(
             moving_raw_rc, self.moving_tracker.corner_found, timestamp
         )
+        if moving_valid:
+            self.moving_fail_frames = 0
+        else:
+            self.moving_fail_frames += 1
+            recovered = self._recover_moving_quad(frame)
+            if recovered is not None:
+                moving_rc, moving_valid, moving_status = self.moving_guard.update(
+                    recovered, [True] * 4, timestamp
+                )
         self.moving_tracker.corners = moving_rc.astype(np.float32)
         self.moving_tracker.corners_missing = False
         if moving_valid:

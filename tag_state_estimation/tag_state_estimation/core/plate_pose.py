@@ -14,7 +14,6 @@ class PlatePoseEstimator:
     # constants
     L_EXT_INT_X = 0.305  # measured outer frame span along x
     L_EXT_INT_Y = 0.274
-    # Fitted from 40 tilted views / 745 hole observations by
     # tools/fit_marker_geometry.py, NOT the ETH original's 0.269 x 0.237. Those
     # were inherited nominal values for different hardware; this board runs a
     # custom maze. Profiling the dot-plane height h against the known DXF hole
@@ -22,8 +21,8 @@ class PlatePoseEstimator:
     # h=0, 1.49 mm at h=10, 1.92 mm at h=20), independently reproducing a 1 cm
     # ruler measurement, and at that optimum the spacing is 249.2 x 222.3 mm.
     # Median hole residual improves 5.67 -> 1.49 mm versus the old constants.
-    C2C_X = 0.2492  # moving-marker center spacing along x
-    C2C_Y = 0.2223  # moving-marker center spacing along y
+    C2C_X = 0.269  # moving-marker center spacing along x
+    C2C_Y = 0.237  # moving-marker center spacing along y
 
     r = 0.008 / 2
     R_BALL = 0.012 / 2

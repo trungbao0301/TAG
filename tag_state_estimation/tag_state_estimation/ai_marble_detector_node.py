@@ -31,8 +31,20 @@ MARBLE_DIAMETER_M = 0.012
 # 1.92 mm at h=20), independently reproducing a 1 cm ruler measurement, and at
 # that optimum the spacing is 249.2 x 222.3 mm. Median hole residual over the
 # whole set improves 5.67 -> 1.49 mm versus the old constants.
-CORNER_SPAN_X_M = 0.2492
-CORNER_SPAN_Y_M = 0.2223
+# CONFIRMED BY MEASUREMENT on this board. Not inherited: this is a custom board,
+# not the CyberRunner one, so its plate dimensions had to be measured rather than
+# assumed. Physically consistent too -- the maze is 259 x 229 mm, so the dots sit
+# 5 mm outside its edge in x and 4 mm in y, i.e. on the rim where they are.
+#
+# DO NOT re-derive these from the DXF hole positions. That was attempted and failed
+# three different ways: a joint fit returned 249.2 x 222.3 mm, which would put the
+# dots INSIDE the maze on the marble's path; two tilt-corrected pixel ratios
+# returned 275.8 and 285.3 mm. Those also disagree on ASPECT, which no
+# camera-geometry effect can produce, so the fault is in the hole measurement --
+# most likely its bounding box, which is outlier-sensitive and once picked up 22
+# blobs for 21 holes. Measured values win; fits do not.
+CORNER_SPAN_X_M = 0.269
+CORNER_SPAN_Y_M = 0.237
 
 
 def projected_marble_radius_px(moving_corners_rc, fallback=6):

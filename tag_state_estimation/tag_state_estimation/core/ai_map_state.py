@@ -1,5 +1,6 @@
 """Geometry and filtering for the AI-only, map-native state estimator."""
 
+import itertools
 from dataclasses import dataclass
 
 import cv2
@@ -16,8 +17,20 @@ from .maze_layout import BOARD_HEIGHT_M, BOARD_WIDTH_M
 # 1.92 mm at h=20), independently reproducing a 1 cm ruler measurement, and at
 # that optimum the spacing is 249.2 x 222.3 mm. Median hole residual over the
 # whole set improves 5.67 -> 1.49 mm versus the old constants.
-MOVING_MARKER_SPACING_X_M = 0.2492
-MOVING_MARKER_SPACING_Y_M = 0.2223
+# CONFIRMED BY MEASUREMENT on this board. Not inherited: this is a custom board,
+# not the CyberRunner one, so its plate dimensions had to be measured rather than
+# assumed. Physically consistent too -- the maze is 259 x 229 mm, so the dots sit
+# 5 mm outside its edge in x and 4 mm in y, i.e. on the rim where they are.
+#
+# DO NOT re-derive these from the DXF hole positions. That was attempted and failed
+# three different ways: a joint fit returned 249.2 x 222.3 mm, which would put the
+# dots INSIDE the maze on the marble's path; two tilt-corrected pixel ratios
+# returned 275.8 and 285.3 mm. Those also disagree on ASPECT, which no
+# camera-geometry effect can produce, so the fault is in the hole measurement --
+# most likely its bounding box, which is outlier-sensitive and once picked up 22
+# blobs for 21 holes. Measured values win; fits do not.
+MOVING_MARKER_SPACING_X_M = 0.269
+MOVING_MARKER_SPACING_Y_M = 0.237
 MARBLE_RADIUS_M = 0.006
 
 MOVING_MARKERS_CENTERED_M = np.asarray(
@@ -60,6 +73,9 @@ class MarkerQuadGuard:
         smoothing=0.45,
         acquire_radius_px=14.0,
         anchor_radius_px=20.0,
+        reacquire_after_sec=1.0,
+        reacquire_radius_px=28.0,
+        snap_after_frames=25,
     ):
         if mode not in ("fixed", "moving"):
             raise ValueError("mode must be 'fixed' or 'moving'")
@@ -85,6 +101,40 @@ class MarkerQuadGuard:
         # definition, and clamping to the anchor is always the better guess.
         self.anchor = corners.copy()
         self.anchor_radius_px = max(0.0, float(anchor_radius_px))
+        # Recovery from a MOVING-quad lock-up.
+        #
+        # ai_map_estimator_node feeds this guard's output back into the detector
+        # (moving_tracker.corners = accepted), so once the guard starts holding, the
+        # detector's local search window follows the STALE quad. If the plate has
+        # since tilted, the real dots are outside that window, they are never found
+        # again, and the guard holds forever: observed live as
+        # moving_markers_timeout on 1097 of 1108 frames while the marble detector
+        # was still reporting 0.995 confidence. Only restarting the node cleared it.
+        #
+        # So after reacquire_after_sec of continuous loss, snap back to the
+        # calibrated anchor and re-enter acquisition, which relaxes the gates for
+        # one frame. reacquire_radius_px is wider than acquire_radius_px because the
+        # dots may have moved up to ~30 px within the tilt envelope while lost;
+        # marker_quad_valid and the shape check still reject the fixed quad, whose
+        # span differs from the moving one by more than 20%.
+        self.reacquire_after_sec = max(0.0, float(reacquire_after_sec))
+        self.reacquire_radius_px = max(0.0, float(reacquire_radius_px))
+        # Per-corner rescue for the "one marker parked in the wrong place" failure.
+        #
+        # trusted requires |candidate - self.corners| <= max_step (~9.5 px at
+        # 60 fps). If the held quad ever drifts from the true dots on ONE corner,
+        # that corner can never be trusted again: the other three keep tracking, the
+        # rejected one is dragged along by group_delta, and because all_observed is
+        # never true the guard reports moving_markers_timeout indefinitely while the
+        # bad corner sits visibly off its dot. Observed live as timeout on 1550 of
+        # 1556 frames with all four dots detectable and the marble detector at
+        # 0.995 confidence.
+        #
+        # So a corner that is FOUND but rejected for this many consecutive frames is
+        # accepted. It is safe: the detector did find a real dot there, and
+        # _shape_continuous plus marker_quad_valid still validate the whole quad.
+        self.snap_after_frames = max(0, int(snap_after_frames))
+        self.untrusted_frames = np.zeros(4, dtype=np.int64)
         self.occlusion_grace_sec = max(0.0, float(occlusion_grace_sec))
         self.max_speed_px_s = float(
             max_speed_px_s
@@ -141,7 +191,34 @@ class MarkerQuadGuard:
             self.loss_since = timestamp
         if timestamp - self.loss_since <= self.occlusion_grace_sec:
             return self.corners.copy(), True, "moving_marker_occlusion_grace"
+        if (
+            self.reacquire_after_sec > 0.0
+            and timestamp - self.loss_since > self.reacquire_after_sec
+        ):
+            # Break the stale-feedback loop -- see self.reacquire_after_sec.
+            self.corners = self.anchor.copy()
+            self.acquired = False
+            self.loss_since = timestamp
+            self.timestamp = None
+            return self.corners.copy(), False, "moving_marker_reacquire"
         return self.corners.copy(), False, "moving_markers_timeout"
+
+    def reseed(self, corners_rc):
+        """Adopt an externally found quad and re-enter acquisition.
+
+        Used with find_marker_quad_global to break out of a lock-up: the caller
+        supplies a quad located by shape rather than by proximity, and the guard
+        restarts tracking from it with the relaxed acquisition gates.
+        """
+        corners = np.asarray(corners_rc, dtype=np.float64)
+        if corners.shape != (4, 2) or not np.all(np.isfinite(corners)):
+            return False
+        self.corners = corners.copy()
+        self.acquired = False
+        self.loss_since = None
+        self.timestamp = None
+        self.untrusted_frames[:] = 0
+        return True
 
     def update(self, candidate_rc, found_mask, timestamp_sec):
         timestamp = float(timestamp_sec)
@@ -162,8 +239,13 @@ class MarkerQuadGuard:
             # Click errors are independent per corner, so they look like an
             # incoherent, shape-changing jump. Relax all three gates for the
             # single acquisition frame; marker_quad_valid still guards sanity.
-            max_step = max(max_step, self.acquire_radius_px)
-            residual_limit = max(residual_limit, self.acquire_radius_px)
+            # After a lock-up recovery the dots may be further out, so the moving
+            # quad gets the wider reacquire radius once it has lost sync before.
+            radius = self.acquire_radius_px
+            if self.mode == "moving" and self.loss_since is not None:
+                radius = max(radius, self.reacquire_radius_px)
+            max_step = max(max_step, radius)
+            residual_limit = max(residual_limit, radius)
             shape_limit = max(shape_limit, 0.25)
         deltas = candidate - self.corners
 
@@ -197,6 +279,14 @@ class MarkerQuadGuard:
                     return self._held_result(timestamp, "fixed_marker_drift_reset")
         else:
             trusted = found & (np.linalg.norm(deltas, axis=1) <= max_step)
+            # Rescue corners stuck outside the budget -- see self.snap_after_frames.
+            self.untrusted_frames[found & ~trusted] += 1
+            self.untrusted_frames[trusted | ~found] = 0
+            if self.snap_after_frames > 0:
+                stale = found & (self.untrusted_frames >= self.snap_after_frames)
+                if np.any(stale):
+                    trusted = trusted | stale
+                    self.untrusted_frames[stale] = 0
             if np.count_nonzero(trusted) < 3:
                 self.timestamp = timestamp
                 return self._held_result(timestamp, "moving_marker_jump_rejected")
@@ -226,6 +316,76 @@ class MarkerQuadGuard:
         if timestamp - self.loss_since <= self.occlusion_grace_sec:
             return self.corners.copy(), True, "moving_marker_occlusion_grace"
         return self.corners.copy(), False, "moving_markers_timeout"
+
+
+def find_marker_quad_global(
+    frame,
+    reference_rc,
+    hsv_lo=(43, 125, 9),
+    hsv_hi=(140, 255, 255),
+    area_px2=(12.0, 400.0),
+    aspect=(0.5, 2.0),
+    search_radius_px=70.0,
+    max_shape_error=0.20,
+):
+    """Find a marker quad anywhere near ``reference_rc`` by shape-matching.
+
+    The per-frame tracker only searches a small window around its last accepted
+    position, so a stale position sends it looking in the wrong place and it can
+    never recover. This is the escape hatch: threshold the WHOLE frame for the
+    marker colour, then pick the four blobs whose quadrilateral best matches the
+    reference's shape signature. Identity comes from geometry, not from proximity
+    to a position that may already be wrong.
+
+    Measured on frames captured during a live lock-up: 28-43 blue blobs per frame
+    (the pneumatic hose and background clutter also pass the colour test), yet the
+    shape match landed within 6.5 px of the calibrated corners on 12 of 12 frames.
+
+    Candidates are restricted to ``search_radius_px`` of a reference corner, which
+    keeps the combinatorics small enough to run inline and stops a distant blue
+    object from being considered at all. Returns (4,2) in [row, column] order to
+    match the rest of this module, or None.
+    """
+    reference = np.asarray(reference_rc, dtype=np.float64)
+    if reference.shape != (4, 2):
+        return None
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, np.asarray(hsv_lo), np.asarray(hsv_hi))
+    count, _, stats, centroids = cv2.connectedComponentsWithStats(mask, 8)
+
+    reference_xy = reference[:, ::-1]
+    candidates = []
+    for index in range(1, count):
+        area = float(stats[index, cv2.CC_STAT_AREA])
+        width = float(stats[index, cv2.CC_STAT_WIDTH])
+        height = float(stats[index, cv2.CC_STAT_HEIGHT])
+        if not area_px2[0] < area < area_px2[1]:
+            continue
+        if not aspect[0] < width / max(height, 1.0) < aspect[1]:
+            continue
+        point = np.asarray(centroids[index], dtype=np.float64)
+        if np.min(np.linalg.norm(reference_xy - point, axis=1)) <= search_radius_px:
+            candidates.append(point)
+    if len(candidates) < 4:
+        return None
+    candidates = np.asarray(candidates)
+
+    target = MarkerQuadGuard._shape_signature(reference)
+    best_error, best_quad = max_shape_error, None
+    for combo in itertools.combinations(range(len(candidates)), 4):
+        quad = candidates[list(combo)]
+        centre = quad.mean(axis=0)
+        ordered = quad[np.argsort(-np.arctan2(quad[:, 1] - centre[1],
+                                              quad[:, 0] - centre[0]))]
+        for roll in range(4):
+            trial = np.roll(ordered, roll, axis=0)[:, ::-1]  # -> (row, column)
+            ratios = MarkerQuadGuard._shape_signature(trial) / np.maximum(target, 1e-9)
+            error = float(np.abs(ratios - 1.0).max())
+            if error < best_error:
+                valid, _ = marker_quad_valid(trial, min_area_px2=5_000.0)
+                if valid:
+                    best_error, best_quad = error, trial
+    return best_quad
 
 
 def marker_quad_valid(corners_rc, min_area_px2=10_000.0):

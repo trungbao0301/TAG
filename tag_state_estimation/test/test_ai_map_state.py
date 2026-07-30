@@ -1,6 +1,8 @@
 import numpy as np
 
+import cv2
 from tag_state_estimation.core.ai_map_state import (
+    find_marker_quad_global,
     AlphaBetaKinematics,
     MarkerQuadGuard,
     MOVING_MARKERS_CENTERED_M,
@@ -153,6 +155,35 @@ def test_fixed_guard_still_follows_genuine_small_camera_motion():
     assert np.allclose(accepted, shifted)
 
 
+def test_moving_guard_recovers_from_a_lock_up_instead_of_holding_forever():
+    # Live failure: the estimator feeds this guard's output back into the detector,
+    # so once it holds, the detector's search window follows the stale quad and can
+    # never re-find dots that have since moved. Observed as moving_markers_timeout
+    # on 1097/1108 frames while the marble detector reported 0.995 confidence.
+    corners = _synthetic_corners_rc()
+    guard = MarkerQuadGuard(
+        corners, mode="moving", occlusion_grace_sec=0.20,
+        reacquire_after_sec=0.5, smoothing=1.0,
+    )
+    guard.update(corners, [True] * 4, 1.0)          # acquire cleanly
+
+    # Detector finds nothing at all (the stale-window situation).
+    t, statuses = 1.0, []
+    for _ in range(80):
+        t += 1.0 / 60.0
+        statuses.append(guard.update(corners, [False] * 4, t)[2])
+    assert "moving_marker_reacquire" in statuses, statuses[-5:]
+    assert not guard.acquired, "must re-enter acquisition so the gates relax"
+    assert np.allclose(guard.corners, guard.anchor), "must snap back to the anchor"
+
+    # With the wider re-acquire window it now latches onto dots well beyond the
+    # normal per-frame budget.
+    moved = np.asarray(guard.anchor) + [9.0, -11.0]
+    accepted, valid, status = guard.update(moved, [True] * 4, t + 1.0 / 60.0)
+    assert valid and status == "valid", status
+    assert np.allclose(accepted, moved)
+
+
 def test_moving_guard_rejects_outside_blob_then_times_out():
     corners = _synthetic_corners_rc()
     guard = MarkerQuadGuard(
@@ -179,3 +210,36 @@ def test_moving_guard_accepts_small_smooth_tilt_motion():
     assert valid
     assert status == "valid"
     assert np.allclose(accepted, candidate)
+
+
+def test_global_quad_finder_ignores_decoy_blobs_and_matches_on_shape():
+    # The real frame has 28-43 blue blobs (hose, background), so identity must come
+    # from the quad's shape, not from proximity to a possibly-stale position.
+    truth = np.float32([[300, 150], [300, 420], [90, 420], [90, 150]])  # (row, col)
+    frame = np.zeros((480, 640, 3), np.uint8)
+    blue = (200, 110, 40)  # BGR, inside DEFAULT_HSV_CORNERS
+    for r, c in truth:
+        cv2.circle(frame, (int(c), int(r)), 4, blue, -1)
+    # decoys: same colour and size, wrong geometry, inside the search radius
+    for r, c in [(300, 190), (95, 380), (250, 150), (140, 430), (300, 380)]:
+        cv2.circle(frame, (int(c), int(r)), 4, blue, -1)
+
+    found = find_marker_quad_global(frame, truth)
+    assert found is not None, "should locate the quad among the decoys"
+    assert np.linalg.norm(found - truth, axis=1).max() < 3.0, found
+
+
+def test_global_quad_finder_returns_none_when_there_is_no_quad():
+    frame = np.zeros((480, 640, 3), np.uint8)
+    cv2.circle(frame, (100, 100), 4, (200, 110, 40), -1)
+    assert find_marker_quad_global(frame, _synthetic_corners_rc()) is None
+
+
+def test_reseed_restarts_acquisition_from_the_supplied_quad():
+    corners = _synthetic_corners_rc()
+    guard = MarkerQuadGuard(corners, mode="moving", smoothing=1.0)
+    guard.update(corners, [True] * 4, 1.0)
+    elsewhere = np.asarray(corners, dtype=np.float64) + [18.0, -14.0]
+    assert guard.reseed(elsewhere)
+    assert not guard.acquired and np.allclose(guard.corners, elsewhere)
+    assert not guard.reseed(np.zeros((3, 2)))          # rejects bad shape
