@@ -109,29 +109,27 @@ export TAG_ANTICHEAT_MIN_STEP_M=0.010
 # every episode at ~30 steps with the -0.50 penalty. 1.0 m/s is the known-good
 # value; revisit only after marble detection is reliable.
 export TAG_ANTICHEAT_MAX_SPEED_MPS=1.0
-# 3, not the 5 it was, because with the path-per-metre-rolled rule the observed
-# streaks collapsed. Over 41 episodes there were 59 streaks of consecutive
-# strikes: 58 of length 1 and 1 of length 2, and none of length 5. So at 5 this
-# termination could never have fired, and enabling it would have been a no-op.
-# 3 sits above the observed maximum, so it still costs nothing on the transient
-# single-frame strikes, while a genuine hop fires almost immediately: once the
-# marble is in the wrong corridor prev_pos_path is held, so EVERY following frame
-# strikes and the streak reaches 3 in about 0.12 s.
 export TAG_ANTICHEAT_CONFIRM_STEPS=3
-# Termination ON. It was off because the old speed budget misfired on fast
-# legitimate motion -- at 0.3 m/s it produced 17 false triggers in 100 s and
-# killed every episode at ~30 steps. The rule it now guards is different: judged
-# against distance rolled, replaying 40000 recorded steps denied 1.08% of on-path
-# steps versus the old rule's 9.60%.
-export TAG_ANTICHEAT_ENABLED=1
-# -0.15, down from -0.50. Against a full path worth 9294 * 0.004/16 = 2.324,
-# -0.50 was 21.5% of a perfect run and about 10x what an episode currently earns
-# (+0.05), so a single rare false positive would dominate the value function.
-# A shortcut already earns nothing -- credit is denied and the reference is held
-# -- so this penalty only has to deter, not to claw back a gain. -0.15 is 3x the
-# hole penalty, which keeps all the terminal rewards within one order of
-# magnitude of each other.
+export TAG_ANTICHEAT_ENABLED=0
 export TAG_ANTICHEAT_PENALTY=-0.15
+
+# Whole progress check OFF, pending a different design.
+#
+# Predicting from 41 episodes of the previous run -- 59 strike streaks, 58 of
+# length 1, one of length 2, none of length 5 -- that a confirm threshold of 3
+# would cost nothing was wrong: with termination on it ended 4 of 23 episodes,
+# 17%. Those terminations at -0.15 each account for about -0.026 of the -0.0253
+# mean return, i.e. the penalty, not the maze, was driving the learning signal.
+# The likely reason the prediction missed is that the earlier measurement ran at
+# a 12 mm path tolerance and this run uses 24 mm, so more frames carry a path
+# index and there is more opportunity for a streak to extend.
+#
+# What this costs, stated plainly: corridors run 20-25 mm apart and index 0 sits
+# 24.9 mm from index 4055, so a 25 mm sideways hop now pays 811 mm of path, about
+# +0.20 in a single step -- more than a good episode earns end to end. Nothing
+# stops the policy from learning to hunt hops instead of driving the maze. Watch
+# episode/score for returns that jump well past what the frontier justifies.
+export TAG_ALLOW_CHEAT=1
 
 export TAG_STUCK_WINDOW_SEC=5
 export TAG_STUCK_RADIUS_M=0.003

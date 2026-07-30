@@ -109,10 +109,20 @@ class TagGym(gym.Env):
         shared = get_package_share_directory("tag_dreamer")
         self.p = LinearPath.load(os.path.join(shared, "path_custom.pkl"))
 
-        # Keep the same convention as env.py: normal training has cheat=False,
-        # so impossible progress is guarded. Setting this True is reserved for
-        # the explicit debug/cheat path used by the original environment.
-        self.cheat = False
+        # cheat=True skips the progress check entirely: every claimed advance is
+        # paid, including one earned by hopping between corridors. env.py uses
+        # the same convention. Exposed as a variable so the check can be taken
+        # out of the loop without editing code while a different approach to
+        # anti-cheat is worked out.
+        #
+        # Be aware of what it costs. The path is 9294 points at 0.0002 m and the
+        # corridors run 20-25 mm apart, so index 0 sits 24.9 mm from index 4055.
+        # With the check off, a 25 mm sideways hop pays 811 mm of path, about
+        # +0.20 -- more than a good episode earns end to end -- so the policy is
+        # free to learn to hunt for hops instead of driving the maze.
+        self.cheat = str(
+            os.environ.get("TAG_ALLOW_CHEAT", "0")
+        ).strip().lower() in ("1", "true", "yes", "on")
         self.anti_cheat_max_step_m = max(
             0.0,
             float(os.environ.get("TAG_ANTICHEAT_MAX_STEP_M", "0.057")),
