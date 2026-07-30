@@ -37,6 +37,24 @@ export PYTHONPATH="$PROJECT_ROOT/dreamerv3:$PROJECT_ROOT/install/tag_dreamer/lib
 # safer than it was: the reference can no longer be teleported on reacquire,
 # because the resync now refuses an index further away than max_speed * gap.
 export TAG_BALL_LOSS_GRACE_SEC=0.20
+# The grace that actually decides it, in frames rather than seconds. A dropout is
+# a count of frames the detector missed, so tolerating it in seconds means the
+# tolerance moves with the loop rate: at p10 19.3 fps the 0.20 s above is 3.9
+# frames and at p90 32.2 fps it is 6.4, so the same dropout ended the episode or
+# not depending on how busy the machine was. 6 frames is fixed. The seconds value
+# stays as a ceiling, because the grace window substitutes predicted positions
+# for measured ones and on a very slow frame that prediction is worthless.
+export TAG_BALL_LOSS_GRACE_FRAMES=6
+
+# Paid once the first time each of the 61 waypoints is passed, on top of the
+# per-millimetre progress term. The progress term is smooth but gives nothing
+# extra for clearing the specific spots the marble keeps failing at, and the
+# measured distribution says it fails at a few specific spots rather than
+# uniformly. 0.02 each is 1.22 over a full run against 2.324 of progress reward,
+# and about a third of what an episode currently earns, so it is worth aiming at.
+# Gated on the best checkpoint reached in the episode, so rolling back and forth
+# across a boundary pays nothing.
+export TAG_CHECKPOINT_BONUS=0.02
 # Left at 0 on purpose: the longer occlusion grace only applies inside the
 # zones configured below, and both zone lists are empty, so all 166 losses
 # were classified source=default_grace and never consulted this value.
@@ -97,8 +115,24 @@ export TAG_ANTICHEAT_MIN_STEP_M=0.010
 # every episode at ~30 steps with the -0.50 penalty. 1.0 m/s is the known-good
 # value; revisit only after marble detection is reliable.
 export TAG_ANTICHEAT_MAX_SPEED_MPS=1.0
-export TAG_ANTICHEAT_CONFIRM_STEPS=3
+# 1, not 3: a confirmed jump ends the episode on the frame it happens. Asked for
+# directly. The reason it was 3 no longer holds the same weight -- back then this
+# rule was the only thing standing between the marble and an 811 mm hop, so a
+# false strike had to be traded against missing a real one. Now the grid blanks
+# the crossings, so this rule is left guarding detector flips, and a flip that
+# only lasts one frame will now end the episode.
+#
+# Watch [Done]: ANTI-CHEAT PROGRESS JUMP against [Done]: OFFPATH in the log. At 3
+# it fired on 1-2 of every ~22 episodes. If at 1 it climbs past that, the flips
+# are being charged, and 2 is the smaller step back rather than 3.
+export TAG_ANTICHEAT_CONFIRM_STEPS=1
 export TAG_ANTICHEAT_ENABLED=1
+# -0.15, three times the -0.05 charged for a hole. It has to be the heavier of
+# the two: they both end the episode, so if cheating cost the same or less there
+# would be no reason to prefer driving the maze. Against a full path worth 2.324
+# it is 6.5%, and against what an episode currently earns (+0.03 to +0.07) it is
+# two to five episodes -- enough to deter without one false strike dominating the
+# value function the way -0.50 would.
 export TAG_ANTICHEAT_PENALTY=-0.15
 export TAG_ALLOW_CHEAT=0
 

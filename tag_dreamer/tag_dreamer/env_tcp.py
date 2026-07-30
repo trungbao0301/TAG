@@ -263,6 +263,24 @@ class TagGym(gym.Env):
         # Set when the marble is reacquired after an occlusion gap. The marble
         # kept rolling while it was hidden, but prev_pos_path is from before the
         # gap, so the whole gap's travel would be charged to one step.
+        # Frames of missed detection tolerated before the marble counts as lost.
+        # 6 covers what was measured -- dropouts confirmed at 0.10-0.15 s across a
+        # 19-32 fps loop, i.e. 2-5 frames -- and unlike a seconds budget it does
+        # not shrink when the machine slows down.
+        self.ball_loss_grace_frames = max(
+            1, int(os.environ.get("TAG_BALL_LOSS_GRACE_FRAMES", "6"))
+        )
+        self.ball_missing_frames = 0
+        # Paid once the first time each waypoint is passed, so there is something
+        # to aim at beyond the per-millimetre progress term. The full path is
+        # worth 9294 * 0.004/16 = 2.324 in progress reward across 61 waypoints, so
+        # 0.02 each adds 1.22 over a complete run -- about half again -- while
+        # being a third of what a good episode currently earns, which is the point.
+        self.checkpoint_bonus = float(
+            os.environ.get("TAG_CHECKPOINT_BONUS", "0.02")
+        )
+        self.best_checkpoint = 0
+        self._waypoint_indices = None
         self.resync_progress_after_gap = False
         # How long the last occlusion gap lasted, which bounds how far the marble
         # could have travelled while it was unseen.
@@ -493,6 +511,8 @@ class TagGym(gym.Env):
         self.implausible_jump_steps = 0
         self.resync_progress_after_gap = False
         self.last_gap_sec = 0.0
+        self.ball_missing_frames = 0
+        self.best_checkpoint = 0
         self.travel_since_credit = 0.0
         self.last_step_pos = None
         self.last_step_implausible = False
@@ -573,6 +593,7 @@ class TagGym(gym.Env):
         )
         self.ball_detected = True
         self.ball_occluded = False
+        self.ball_missing_frames = 0
         self.ball_missing_since = None
         self.ball_missing_grace_sec = 0.0
         self.ball_loss_reported = False
@@ -616,16 +637,51 @@ class TagGym(gym.Env):
     def _copy_obs(obs):
         return {key: value.copy() for key, value in obs.items()}
 
-    def _checkpoint_for_occlusion(self):
-        waypoint_path_indices = [0]
-        total = 0
-        for index in range(1, self.p.orig_waypoints.shape[0]):
-            segment = self.p.orig_waypoints[index] - self.p.orig_waypoints[index - 1]
-            total += int(np.floor(np.linalg.norm(segment) / self.p.distance)) + 1
-            waypoint_path_indices.append(min(total, self.p.num_points - 1))
+    def _waypoint_path_indices(self):
+        """Path index of each waypoint. Fixed for a given path, so computed once."""
+        if self._waypoint_indices is None:
+            indices = [0]
+            total = 0
+            for index in range(1, self.p.orig_waypoints.shape[0]):
+                segment = (
+                    self.p.orig_waypoints[index] - self.p.orig_waypoints[index - 1]
+                )
+                total += int(np.floor(np.linalg.norm(segment) / self.p.distance)) + 1
+                indices.append(min(total, self.p.num_points - 1))
+            self._waypoint_indices = indices
+        return self._waypoint_indices
+
+    def _checkpoint_at(self, path_index):
         return int(
-            np.searchsorted(waypoint_path_indices, self.prev_pos_path, side="right")
+            np.searchsorted(self._waypoint_path_indices(), path_index, side="right")
         )
+
+    def _checkpoint_for_occlusion(self):
+        return self._checkpoint_at(self.prev_pos_path)
+
+    def _checkpoint_bonus_reward(self):
+        """Pay once for each waypoint passed, the first time it is passed.
+
+        The progress term alone pays 0.00025 per 0.2 mm rolled, which is smooth
+        but gives nothing extra for getting past the specific spots the marble
+        keeps failing at -- and the measured distribution says it fails at a few
+        specific spots, not uniformly. This makes clearing one worth aiming at.
+        Gated on the best reached this episode so it cannot be farmed by rolling
+        back and forth across a boundary.
+        """
+        if self.checkpoint_bonus == 0.0:
+            return 0.0
+        reached = self._checkpoint_at(self.prev_pos_path)
+        if reached <= self.best_checkpoint:
+            return 0.0
+        gained = reached - self.best_checkpoint
+        self.best_checkpoint = reached
+        print(
+            f"[Checkpoint]: reached {reached}/"
+            f"{len(self._waypoint_path_indices()) - 1}, "
+            f"bonus={gained * self.checkpoint_bonus:+.3f}"
+        )
+        return gained * self.checkpoint_bonus
 
     def _active_ball_loss_grace(self):
         checkpoint = self._checkpoint_for_occlusion()
@@ -663,6 +719,7 @@ class TagGym(gym.Env):
 
     def _obs_for_missing_ball(self, rep):
         now = time.monotonic()
+        self.ball_missing_frames += 1
         if self.ball_missing_since is None:
             self.ball_missing_since = now
             (
@@ -674,12 +731,24 @@ class TagGym(gym.Env):
                 "[Occlusion]: BALL HIDDEN "
                 f"checkpoint={checkpoint} "
                 f"source={grace_source} "
-                f"grace={self.ball_missing_grace_sec:.2f}s"
+                f"grace={self.ball_loss_grace_frames} frames "
+                f"or {self.ball_missing_grace_sec:.2f}s"
             )
 
         missing_sec = now - self.ball_missing_since
+        # Frames, not seconds, decide this. A dropout is a number of frames the
+        # detector missed, but a grace in seconds converts to a frame count that
+        # moves with the loop rate: the loop runs at p10 19.3 / p50 25.3 fps, so
+        # 0.10 s was 1.9 frames at the low end and 2.5 at the middle. Episodes
+        # were ending on two missed frames with the marble plainly still on the
+        # board, and they ended sooner the slower the machine happened to be.
+        #
+        # The seconds bound is kept as a ceiling, because the grace window feeds
+        # predicted positions rather than measurements, and on a very slow frame
+        # the marble travels far enough for that prediction to be worthless.
         within_grace = (
             self.last_valid_obs is not None
+            and self.ball_missing_frames <= self.ball_loss_grace_frames
             and missing_sec < self.ball_missing_grace_sec
         )
         self.ball_occluded = within_grace
@@ -887,6 +956,7 @@ class TagGym(gym.Env):
             self.progress = curr_pos_path - self.prev_pos_path
             reward = float(curr_pos_path - self.prev_pos_path) * 0.004 / 16.0
             self.prev_pos_path = curr_pos_path
+            reward += self._checkpoint_bonus_reward()
             # This advance has been paid for; the next one needs fresh travel.
             self.travel_since_credit = 0.0
             reward += self._stuck_reward(obs["states"][2:4])
