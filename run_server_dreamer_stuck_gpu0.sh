@@ -111,16 +111,21 @@ export TAG_ANTICHEAT_TRAVEL_RATIO=0
 # to cross those cells, so it cannot be taken at all rather than having to be
 # detected. 2 frames rather than the original's 1 because this detector loses
 # the marble often enough that a single frame should not end an episode.
-# 10 frames, ~0.4 s, and this is a stopgap rather than a chosen value. At 2 it
-# ended 633 of 644 episodes with a median length of 3 steps, because the marble's
-# rest position is reported at y 227.9 mm and 47.6% of episode-start frames come
-# back above the board's 229 mm edge -- outside the grid entirely, so the episode
-# began off-path and died before it could move. Across all frames y lands off the
-# board 43% of the time while x does so 0.00% of the time, so something is wrong
-# with reported y specifically, and it is not the marker spacing: the moving
-# quad's aspect on the image is 1.1291 against the 1.1350 the code assumes, only
-# -0.5% out. Put this back to 2 once reported y is trustworthy.
-export TAG_OFFPATH_CONFIRM_STEPS=10
+# 1 frame: touching a blanked cell ends the episode, which is what the original
+# env did and what makes the trap have teeth. At anything higher the marble can
+# cross a blanked ridge and come out the other side unpunished -- at 10 it had
+# 0.4 s of grace, which is longer than a crossing takes.
+#
+# 10 was a stopgap from when reported y was wrong. At 2 back then it ended 633 of
+# 644 episodes with a median length of 3 steps, because 47.6% of episode-start
+# frames came back above the board's 229 mm edge, outside the grid entirely, so
+# episodes began off-path. marker_plane_height_m 0 fixed that: starts inside the
+# corridor went 52.0% -> 92.9% and episodes ended by OFFPATH went 49/57 -> 0.
+#
+# That 0 was measured at 10, not at 1, so this value is not yet backed by a
+# measurement. If OFFPATH starts firing on single glitch frames, raise to 3 or 4
+# rather than back to 10.
+export TAG_OFFPATH_CONFIRM_STEPS=1
 export TAG_OFFPATH_PENALTY=-0.05
 
 export TAG_STUCK_WINDOW_SEC=5
