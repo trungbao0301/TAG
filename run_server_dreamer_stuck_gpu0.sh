@@ -50,15 +50,33 @@ unset TAG_OCCLUSION_ZONES_FILE
 # would make this moot, but it returns a valid index for only 5.5% of real
 # positions, so this tolerance is carrying the whole lookup.
 #
-# 9 mm is the provable ceiling, not a guess. If the marble is within T of path
-# point A and the truly nearest point is B, then |A-B| <= 2T. An exhaustive
-# scan of all 9294 path points found no pair closer than 20 mm that is more
-# than 150 indices apart, so T < 10 mm bounds any misattribution to 150
-# indices, i.e. 30 mm of path. 9 mm keeps a margin below that boundary and was
-# checked against 8000 real positions: zero of them had two corridors more than
-# 150 indices apart both within 9 mm. Raising it further is not safe -- at
-# 10 mm two corridors 20 mm apart can tie.
-export TAG_PATH_TOLERANCE_M=0.009
+# 12 mm is where measured ambiguity turns over. A position is ambiguous when a
+# second corridor more than 150 indices away sits within 3 mm of the nearest
+# one, i.e. detector noise could pick the wrong one. Binned over 246760 real
+# positions:
+#
+#     0- 9 mm   71.3% of frames    0.0% ambiguous
+#     9-12 mm   21.7% of frames    0.3% ambiguous
+#    12-15 mm    2.1% of frames   14.9% ambiguous
+#    15-20 mm    0.9% of frames   24.8% ambiguous
+#    25-40 mm    2.3% of frames   82.4% ambiguous
+#
+# So 12 mm buys 21.7% of all frames for 0.3% ambiguity and lands at 93.0%
+# coverage, while every millimetre past it costs a 50x jump in wrong-corridor
+# assignments to gain about 2% of frames.
+#
+# The tempting alternative is to drop the limit entirely and match
+# overlay_map_view_simple.py:420, which falls back to an unbounded argmin. Do
+# not: the bands above 12 mm are 7.1% of frames at 15-82% ambiguity, so an
+# unbounded lookup would hand roughly 5.6% of all frames a goal vector pointing
+# down the wrong corridor. A zeroed hint is better than a confidently wrong one.
+# Unbounded is fine for the overlay because nothing is scored from it.
+#
+# The worst-case geometric bound is tighter than this -- |A-B| <= 2T against a
+# 20 mm minimum corridor separation argues for T < 10 mm -- but that is the
+# bound for a marble sitting exactly between two corridors, which the measured
+# distribution says essentially never happens below 12 mm.
+export TAG_PATH_TOLERANCE_M=0.012
 
 # Penalty for losing the marble down a hole. Sized against the reward scale: the
 # full path is worth only 9294 pts * 0.004/16 = 2.324, so -0.20 was 8.6% of a

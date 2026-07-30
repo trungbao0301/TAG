@@ -112,10 +112,30 @@ class AiMapEstimatorNode(Node):
         self.declare_parameter("marker_plane_height_m", 0.010)
         self.declare_parameter("marble_radius_m", 0.006)
         self.declare_parameter("corner_mask_radius_px", 12.0)
-        self.declare_parameter("hole_rejection_enabled", True)
+        # Off by default: the detector, not the geometry, decides whether the
+        # marble is still there. The premise here was that overlapping a hole
+        # means the marble has left the surface, but a hole is 7.5 mm in radius
+        # and the margin adds 2.5 mm, so a marble whose centre came within
+        # 10 mm of a hole centre was dropped on that same frame -- and with
+        # delay_sec 0.0, rolling across a hole was indistinguishable from
+        # falling into it. Measured over 259048 recorded positions the marble is
+        # inside that 10 mm ring on 3.11% of frames, and of 1963 entries into
+        # it 47.7% lasted 1-3 frames, i.e. it rolled straight over and kept
+        # going. Once the estimator marked those invalid the episode ended
+        # 0.10 s later on TAG_BALL_LOSS_GRACE_SEC.
+        #
+        # A marble that really drops is not visible any more, so the detector
+        # reports it missing and the normal loss path handles it. Sampling
+        # /tag_state_estimation/status for 60 s of live play returned 2389
+        # 'valid' and zero 'ai_hole_rejected_*', so this gate was contributing
+        # nothing except that risk.
+        #
+        # The failure it was guarding against is the detector mistaking a hole
+        # for the marble and reporting it parked there forever. That now shows
+        # up as an episode running to TAG_TIMEOUT_STEPS instead of ending early,
+        # which is visible in the log rather than silent.
+        self.declare_parameter("hole_rejection_enabled", False)
         self.declare_parameter("hole_rejection_margin_m", 0.0025)
-        # A hole candidate means the marble has left the playable surface.
-        # Reject it on the same frame instead of holding a visible position.
         self.declare_parameter("hole_rejection_delay_sec", 0.0)
         self.declare_parameter("velocity_alpha", 0.65)
         self.declare_parameter("velocity_beta", 0.12)
