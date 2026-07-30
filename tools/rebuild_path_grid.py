@@ -188,6 +188,71 @@ def main():
         grid[add] = near[add]
         return grid, int(add.sum())
 
+    def grow():
+        """Widen the credited region while keeping zero jump pairs by construction.
+
+        A fixed distance threshold is the wrong tool: corridors are not all the
+        same width, so 10 mm leaves the wide ones -- the strip between the
+        leftmost corridor and the board edge is 14-19 mm from its own centreline
+        -- uncredited, while 12 mm already breaks the guarantee elsewhere.
+
+        Instead start from the centreline and add a cell only when EVERY
+        credited cell it touches is within JUMP_M of it. Admitting on "some
+        neighbour is close" is not enough and does not hold the invariant -- a
+        cell can sit between one corridor and another, close to the first and far
+        from the second, and admitting it creates exactly the pair the rule is
+        meant to forbid. Measured: that version produced 343 jump pairs.
+
+        Checking at admission is sufficient, because pairs between two cells that
+        are already credited never change afterwards.
+        """
+        thr = int(JUMP_M / 0.0002)
+        ok = vis & in_box
+        cred = np.zeros_like(ok)
+        cred[centre_r, centre_c] = ok[centre_r, centre_c]
+
+        # Index difference to each neighbour, precomputed once.
+        near64 = near.astype(np.int64)
+        close_up = np.abs(near64[1:, :] - near64[:-1, :]) <= thr
+        close_left = np.abs(near64[:, 1:] - near64[:, :-1]) <= thr
+
+        while True:
+            touches = np.zeros_like(cred)
+            far = np.zeros_like(cred)
+            # neighbour below (row-1) / above (row+1)
+            touches[1:, :] |= cred[:-1, :]
+            far[1:, :] |= cred[:-1, :] & ~close_up
+            touches[:-1, :] |= cred[1:, :]
+            far[:-1, :] |= cred[1:, :] & ~close_up
+            # neighbour left (col-1) / right (col+1)
+            touches[:, 1:] |= cred[:, :-1]
+            far[:, 1:] |= cred[:, :-1] & ~close_left
+            touches[:, :-1] |= cred[:, 1:]
+            far[:, :-1] |= cred[:, 1:] & ~close_left
+
+            new = ok & ~cred & touches & ~far
+            # Cells admitted in the same sweep are also neighbours of each other,
+            # and that pair is not covered by the check above -- two cells can
+            # each be fine against the existing region while being far from one
+            # another. Measured: without this prune, 70 jump pairs survived. Drop
+            # both sides until the sweep is internally consistent.
+            while True:
+                clash = np.zeros_like(new)
+                clash[1:, :] |= new[:-1, :] & ~close_up
+                clash[:-1, :] |= new[1:, :] & ~close_up
+                clash[:, 1:] |= new[:, :-1] & ~close_left
+                clash[:, :-1] |= new[:, 1:] & ~close_left
+                bad = new & clash
+                if not bad.any():
+                    break
+                new &= ~bad
+            if not new.any():
+                break
+            cred |= new
+
+        grid = np.where(cred, near, -1)
+        return grid, int(cred.sum())
+
     print(f"  grid {ny}x{nx} at {1000 * cell:.1f} mm/cell, wall_r {1000 * p.wall_r:.1f} mm")
     if pos is not None:
         print(f"  scoring against {len(pos)} recorded marble positions")
@@ -196,15 +261,17 @@ def main():
     full = np.where(vis & in_box, near, -1)
     score(full, "visibility only")
     print()
-    for tol_mm in (3, 4, 5, 6, 8, 10, 12):
+    for tol_mm in (6, 10, 12):
         grid, added = rebuild(tol_mm / 1000.0)
         score(grid, f"restore <= {tol_mm:2d} mm")
+    grown, grown_cells = grow()
+    score(grown, "grow from centreline")
 
     if args.write:
         if args.tol_mm is None:
-            print("\n  --write needs --tol_mm", file=sys.stderr)
-            return 1
-        grid, added = rebuild(args.tol_mm / 1000.0)
+            grid, added = grown, grown_cells
+        else:
+            grid, added = rebuild(args.tol_mm / 1000.0)
         jumps = jump_pairs(grid)
         if jumps:
             print(
@@ -214,7 +281,8 @@ def main():
             )
             return 1
         p.closest_idx = grid
-        out = args.out or args.path.replace(".pkl", f"_grid{int(args.tol_mm)}mm.pkl")
+        suffix = "grown" if args.tol_mm is None else f"grid{int(args.tol_mm)}mm"
+        out = args.out or args.path.replace(".pkl", f"_{suffix}.pkl")
         with open(out, "wb") as fh:
             pickle.dump(p, fh, protocol=pickle.HIGHEST_PROTOCOL)
         print(f"\n  restored {added} cells, 0 jump pairs")

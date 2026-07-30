@@ -112,7 +112,13 @@ def main():
         default=os.path.join(here, "..", "tag_dreamer", "data", "path_custom.pkl"),
     )
     ap.add_argument("--out", default=os.path.join(here, "..", "docs", "path_grid.png"))
+    ap.add_argument(
+        "--zoom",
+        default="",
+        help="x0,x1,y0,y1 in mm, to inspect one region instead of the whole board",
+    )
     args = ap.parse_args()
+    zoom = [float(v) for v in args.zoom.split(",")] if args.zoom else None
 
     import matplotlib
     matplotlib.use("Agg")
@@ -201,7 +207,23 @@ def main():
 
     for ax in axes:
         ax.set_xlabel("x (mm)")
+        if zoom:
+            ax.set_xlim(zoom[0], zoom[1])
+            ax.set_ylim(zoom[2], zoom[3])
     axes[0].set_ylabel("y (mm)")
+
+    if zoom:
+        cell = p.distance
+        c0, c1 = int(zoom[0] / 1000 / cell), int(zoom[1] / 1000 / cell)
+        r0, r1 = int(zoom[2] / 1000 / cell), int(zoom[3] / 1000 / cell)
+        sub_ok = stored_ok[r0:r1, c0:c1]
+        sub_over = over_painted[r0:r1, c0:c1]
+        sub_gen = genuine[r0:r1, c0:c1]
+        print(
+            f"  zoom {args.zoom}: credited {100 * sub_ok.mean():.1f}%  "
+            f"jump-detection {100 * sub_over.mean():.1f}%  "
+            f"walls {100 * sub_gen.mean():.1f}%"
+        )
 
     fig.tight_layout()
     out = os.path.abspath(args.out)
