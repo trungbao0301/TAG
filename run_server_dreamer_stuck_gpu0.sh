@@ -109,14 +109,29 @@ export TAG_ANTICHEAT_MIN_STEP_M=0.010
 # every episode at ~30 steps with the -0.50 penalty. 1.0 m/s is the known-good
 # value; revisit only after marble detection is reliable.
 export TAG_ANTICHEAT_MAX_SPEED_MPS=1.0
-export TAG_ANTICHEAT_CONFIRM_STEPS=5
-# Termination OFF. The maze does have a reachable shortcut (a 59.5 mm hop across
-# the open centre skips 836 mm of path, 43.6% -> 88.6%), but credit for it is
-# already denied by the corridor + frozen prev_pos_path + per-step budget. Turning
-# termination on while marble detection sits near 40% valid just charges -0.50 for
-# camera faults. Set to 1 once detection is fixed.
-export TAG_ANTICHEAT_ENABLED=0
-export TAG_ANTICHEAT_PENALTY=-0.50
+# 3, not the 5 it was, because with the path-per-metre-rolled rule the observed
+# streaks collapsed. Over 41 episodes there were 59 streaks of consecutive
+# strikes: 58 of length 1 and 1 of length 2, and none of length 5. So at 5 this
+# termination could never have fired, and enabling it would have been a no-op.
+# 3 sits above the observed maximum, so it still costs nothing on the transient
+# single-frame strikes, while a genuine hop fires almost immediately: once the
+# marble is in the wrong corridor prev_pos_path is held, so EVERY following frame
+# strikes and the streak reaches 3 in about 0.12 s.
+export TAG_ANTICHEAT_CONFIRM_STEPS=3
+# Termination ON. It was off because the old speed budget misfired on fast
+# legitimate motion -- at 0.3 m/s it produced 17 false triggers in 100 s and
+# killed every episode at ~30 steps. The rule it now guards is different: judged
+# against distance rolled, replaying 40000 recorded steps denied 1.08% of on-path
+# steps versus the old rule's 9.60%.
+export TAG_ANTICHEAT_ENABLED=1
+# -0.15, down from -0.50. Against a full path worth 9294 * 0.004/16 = 2.324,
+# -0.50 was 21.5% of a perfect run and about 10x what an episode currently earns
+# (+0.05), so a single rare false positive would dominate the value function.
+# A shortcut already earns nothing -- credit is denied and the reference is held
+# -- so this penalty only has to deter, not to claw back a gain. -0.15 is 3x the
+# hole penalty, which keeps all the terminal rewards within one order of
+# magnitude of each other.
+export TAG_ANTICHEAT_PENALTY=-0.15
 
 export TAG_STUCK_WINDOW_SEC=5
 export TAG_STUCK_RADIUS_M=0.003
