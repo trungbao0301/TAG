@@ -45,7 +45,7 @@ export PYTHONPATH="$PROJECT_ROOT/dreamerv3:$PROJECT_ROOT/install/tag_dreamer/lib
 export TAG_BALL_LOSS_GRACE_SEC=0.20
 # Left at 0 on purpose: the longer occlusion grace only applies inside the
 # zones configured below, and both zone lists are empty, so all 166 losses
-# were classified source=outside_zone and never consulted this value.
+# were classified source=default_grace and never consulted this value.
 export TAG_OCCLUSION_GRACE_SEC=0
 export TAG_OCCLUSION_XY_ZONES=""
 export TAG_OCCLUSION_CHECKPOINT_RANGES=""

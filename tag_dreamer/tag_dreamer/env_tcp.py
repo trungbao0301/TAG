@@ -637,7 +637,12 @@ class TagGym(gym.Env):
         for start, end in self.occlusion_checkpoint_ranges:
             if start <= checkpoint <= end:
                 return self.occlusion_grace_sec, checkpoint, "checkpoint_zone"
-        return self.ball_loss_grace_sec, checkpoint, "outside_zone"
+        # Named for where the number came from, not for where the marble is.
+        # "outside_zone" read as though the marble were outside something it
+        # should have been inside, which it does not mean: no occlusion zone
+        # matched, so the default grace applies. With both zone lists empty that
+        # is every loss, at every checkpoint.
+        return self.ball_loss_grace_sec, checkpoint, "default_grace"
 
     def _remember_visible_ball(self, obs):
         now = time.monotonic()
