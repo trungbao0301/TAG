@@ -46,6 +46,8 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "tag_dreamer"))
+# maze_layout lives in the estimator package and is where the hole centres are.
+sys.path.insert(0, os.path.join(HERE, "..", "tag_state_estimation"))
 sys.path.insert(0, HERE)
 
 WINDOW = "shortcut zones -- drag to block, s to save, q to quit"
@@ -90,21 +92,69 @@ def jump_pairs(grid):
     return jump_mask(grid)[1]
 
 
-def build(p, layout, zones_mm):
-    """Credit everything the walls allow, except inside the chosen rectangles."""
+def solid_mask(p, layout, wall_mm, hole_margin_mm, holes_mode="allow"):
+    """Cells the marble centre cannot be in: wall bodies and hole mouths.
+
+    Walls are stored as pairs of parallel segments 1.9-4.4 mm apart, so a wall is
+    a thin rectangle rather than a line. Stroking each segment with wall_mm of
+    thickness covers both faces and the body between them.
+    """
+    import cv2
+    cell = p.distance
+    ny, nx = p.closest_idx.shape
+    mask = np.zeros((ny, nx), np.uint8)
+    t = max(1, int(round(wall_mm / 1000.0 / cell)))
+    for x0, x1_, y in np.asarray(layout["walls_h"], dtype=float):
+        cv2.line(mask, (int(x0 / cell), int(y / cell)),
+                 (int(x1_ / cell), int(y / cell)), 1, t)
+    for y0, y1_, x in np.asarray(layout["walls_v"], dtype=float):
+        cv2.line(mask, (int(x / cell), int(y0 / cell)),
+                 (int(x / cell), int(y1_ / cell)), 1, t)
+    if holes_mode != "block":
+        # Rolling across a hole mouth without falling in is legal play, so the
+        # mouth stays credited by default. Blocking it would end the episode on
+        # a crossing, which is the opposite of that.
+        return mask.astype(bool)
+    try:
+        import importlib
+        ml = importlib.import_module("tag_state_estimation.core.maze_layout")
+        holes = np.asarray(ml.HOLES_LOWER_LEFT_M, dtype=float)
+        radii = np.asarray(ml.HOLE_RADII_M, dtype=float).ravel()
+        for i, (hx, hy) in enumerate(holes):
+            r = radii[min(i, len(radii) - 1)] + hole_margin_mm / 1000.0
+            cv2.circle(mask, (int(hx / cell), int(hy / cell)),
+                       max(1, int(r / cell)), 1, -1)
+    except Exception as exc:                       # noqa: BLE001
+        print(f"  holes not excluded ({exc})")
+    return mask.astype(bool)
+
+
+def build(p, layout, zones_mm, base="visibility", wall_mm=3.0,
+          hole_margin_mm=0.0, holes_mode="allow"):
+    """Credit cells, minus the chosen rectangles.
+
+    base="visibility" credits only where the walls let a path point be seen.
+    base="open" credits the whole board except wall bodies and hole mouths, which
+    is a blunter starting point but a predictable one to draw zones onto.
+    """
     import rebuild_path_grid as R
     from scipy.spatial import cKDTree
 
     cell = p.distance
     ny, nx = p.closest_idx.shape
-    x1, x2, y1, y2 = R.boxes(p, layout)
-    vis = R.visibility(p, x1, x2, y1, y2)
 
     ys, xs = np.meshgrid(np.arange(ny) * cell, np.arange(nx) * cell, indexing="ij")
     _, near = cKDTree(p.points).query(np.column_stack([xs.ravel(), ys.ravel()]))
     near = near.reshape(ny, nx)
-    npx, npy = p.points[near, 0], p.points[near, 1]
-    in_box = (npx >= x1) & (npx <= x2) & (npy >= y1) & (npy <= y2)
+
+    if base == "open":
+        allowed = ~solid_mask(p, layout, wall_mm, hole_margin_mm, holes_mode)
+    else:
+        x1, x2, y1, y2 = R.boxes(p, layout)
+        vis = R.visibility(p, x1, x2, y1, y2)
+        npx, npy = p.points[near, 0], p.points[near, 1]
+        allowed = vis & (npx >= x1) & (npx <= x2) & (npy >= y1) & (npy <= y2)
+    in_box = allowed
 
     blocked = np.zeros((ny, nx), dtype=bool)
     for x0, y0, x3, y3 in zones_mm:
@@ -112,8 +162,8 @@ def build(p, layout, zones_mm):
         r0, r1 = int(min(y0, y3) / 1000 / cell), int(max(y0, y3) / 1000 / cell)
         blocked[max(0, r0):r1 + 1, max(0, c0):c1 + 1] = True
 
-    credited = vis & in_box & ~blocked
-    return np.where(credited, near, -1), credited, vis & in_box
+    credited = allowed & ~blocked
+    return np.where(credited, near, -1), credited, allowed
 
 
 def report(p, grid, allowed, marble=None):
@@ -150,6 +200,22 @@ def main():
     )
     ap.add_argument("--logdir", default="", help="a run logdir, to score real play")
     ap.add_argument("--scale", type=float, default=2.4, help="display px per mm")
+    ap.add_argument(
+        "--base", choices=("visibility", "open"), default="open",
+        help="open: whole board minus wall bodies and holes. visibility: only "
+             "where the walls let a path point be seen.",
+    )
+    ap.add_argument(
+        "--wall_mm", type=float, default=3.0,
+        help="stroke width for wall bodies; walls are pairs of segments "
+             "1.9-4.4 mm apart so 3 mm covers both faces and the body",
+    )
+    ap.add_argument("--hole_margin_mm", type=float, default=0.0)
+    ap.add_argument(
+        "--holes", choices=("allow", "block"), default="allow",
+        help="allow: a hole mouth stays credited, so rolling across one without "
+             "falling in is legal. block: entering one ends the episode.",
+    )
     args = ap.parse_args()
 
     p, layout = load(args.path)
@@ -166,7 +232,7 @@ def main():
         print(f"  loaded {len(zones)} zone(s) from {args.zones}")
 
     def write(zones_now):
-        grid, _, allowed = build(p, layout, zones_now)
+        grid, _, allowed = build(p, layout, zones_now, args.base, args.wall_mm, args.hole_margin_mm, args.holes)
         n = report(p, grid, allowed, marble)
         with open(args.zones, "w") as fh:
             json.dump({"zones_mm": zones_now}, fh, indent=2)
@@ -194,7 +260,7 @@ def main():
         return int(x_mm * s), int(H - y_mm * s)
 
     def recompute(zones_now):
-        grid, credited, allowed = build(p, layout, zones_now)
+        grid, credited, allowed = build(p, layout, zones_now, args.base, args.wall_mm, args.hole_margin_mm, args.holes)
         hops, n = jump_mask(grid)
         return credited, allowed, hops, n
 
