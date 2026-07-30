@@ -155,6 +155,11 @@ class AiMapEstimatorNode(Node):
         # letting it decide anything, which is how to measure the hit rate before
         # handing it authority. fuse lets either detector carry the frame.
         self.declare_parameter("hsv_marble_mode", "fuse")
+        # Disc erased from every corner search window around the marble's previous
+        # position. 10 px is about 5 mm here, so it covers a frame of travel with
+        # margin while staying well inside the 10 mm that separates a dot centre
+        # from the closest a marble centre can get to it.
+        self.declare_parameter("marble_exclude_radius_px", 10.0)
         self.declare_parameter("marker_plane_height_m", 0.0)
         self.declare_parameter("marble_radius_m", 0.006)
         self.declare_parameter("corner_mask_radius_px", 12.0)
@@ -219,6 +224,12 @@ class AiMapEstimatorNode(Node):
         self.hsv_marble_stats = {"ai": 0, "hsv": 0, "both": 0, "neither": 0}
         self.last_ball_source = "ai"
         self.last_hsv_xy = None
+        # Where the marble was on the previous frame, fed back into the corner
+        # search so it cannot be mistaken for a dot.
+        self.last_ball_px = None
+        self.marble_exclude_radius_px = float(
+            self.get_parameter("marble_exclude_radius_px").value
+        )
         self.camera_height_m = float(self.get_parameter("camera_height_m").value)
         self.marker_plane_height_m = float(
             self.get_parameter("marker_plane_height_m").value
@@ -459,6 +470,14 @@ class AiMapEstimatorNode(Node):
             if not fixed_valid:
                 fixed_status = "fixed_marker_geometry_invalid"
 
+        # Deny the corner search the marble. It was located on the previous frame,
+        # and both marker sets are blue, so this is the only guard that holds when
+        # the marble sits at the edge of a corner window -- there the size gate
+        # sees ~64 px2 of a clipped marble, inside the 42-65 px2 a dot occupies.
+        # Radius covers a frame of travel: p90 is 3.7 mm, about 7 px here.
+        for tracker in (self.fixed_tracker, self.moving_tracker):
+            tracker.exclude_px = self.last_ball_px
+            tracker.exclude_radius_px = self.marble_exclude_radius_px
         moving_raw_rc = self.moving_tracker.detect_corners(frame)
         moving_rc, moving_valid, moving_status = self.moving_guard.update(
             moving_raw_rc, self.moving_tracker.corner_found, timestamp
@@ -534,6 +553,10 @@ class AiMapEstimatorNode(Node):
                     ball_xy = np.asarray(fused.measurement, dtype=np.float64)
                 else:
                     ball_xy = None
+
+        self.last_ball_px = (
+            np.asarray(ball_xy, dtype=np.float64) if ball_xy is not None else None
+        )
 
         status = pose_status
         measurement = map_ai_pixel(

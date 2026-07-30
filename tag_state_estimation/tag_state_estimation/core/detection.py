@@ -143,6 +143,10 @@ class Detector:
         self.consecutive_ball_misses = 0
 
         self.corner_subimage_half_size = corner_subimage_half_size
+        # Set by the caller each frame to where the marble was last seen, so a
+        # corner search never has to tell it apart from a dot by size.
+        self.exclude_px = None
+        self.exclude_radius_px = 0.0
         corners = np.repeat(
             np.expand_dims(np.asarray(markers)[:, ::-1], axis=1), 2, axis=1
         )
@@ -468,6 +472,44 @@ class Detector:
     CORNER_BLOB_MAX_PX2 = 90.0
     CORNER_BLOB_MIN_PX2 = 8.0
 
+    def _erase_known_marble(self, mask, coords_ul_sub_im):
+        """Remove the marble's pixels from a corner window before anything else.
+
+        The size gate below cannot hold at the edge of the window. A marble is
+        ~128 px2, 12.8 px across, and the window is 25x25, so a marble half inside
+        it presents about 64 px2 -- squarely inside the 42-65 px2 a dot occupies.
+        That is exactly the case that shows up as "the marble in the corner got
+        tracked as a marker", because being half in the window IS being at the
+        corner.
+
+        Size cannot separate them there, but position can: the marble was located
+        on the previous frame, to a pixel or two. Erasing a disc around it leaves
+        only the dot, if the dot is visible at all. exclude_px is in full-frame
+        [x, y]; coords_ul_sub_im is this window's top-left in the same frame.
+        """
+        if self.exclude_px is None or self.exclude_radius_px <= 0.0:
+            return mask
+        centre = np.asarray(self.exclude_px, dtype=np.float64)
+        if centre.shape != (2,) or not np.all(np.isfinite(centre)):
+            return mask
+        origin = np.asarray(coords_ul_sub_im, dtype=np.float64)
+        # coords_ul_sub_im is [row, col] while exclude_px is [x, y].
+        local = centre - origin[::-1]
+        radius = float(self.exclude_radius_px)
+        height, width = mask.shape[:2]
+        if (
+            local[0] < -radius
+            or local[1] < -radius
+            or local[0] > width + radius
+            or local[1] > height + radius
+        ):
+            return mask
+        out = mask.copy()
+        cv2.circle(
+            out, (int(round(local[0])), int(round(local[1]))), int(round(radius)), 0, -1
+        )
+        return out
+
     def _keep_dot_sized(self, mask):
         """Zero out mask components that are not dot-sized.
 
@@ -492,6 +534,7 @@ class Detector:
         sub_masked, mask = masking.mask_hsv(
             sub_im, self.hsv_params_corners, self.acceleration_backend
         )
+        mask = self._erase_known_marble(mask, coords_ul_sub_im)
         mask = self._keep_dot_sized(mask)
         c_local, found = gaussian_robust.detect_gaussian(
             mask, i, self.q_corners, self.th_corners, show_sub=self.show_subimages
