@@ -29,12 +29,16 @@ class HybridBallTracker:
         occlusion_grace_frames=90,
         far_reacquire_confirm_frames=3,
         ai_fusion_weight=0.5,
+        trust_hsv_alone=False,
     ):
         self.agreement_radius_px = float(agreement_radius_px)
         self.max_reacquire_jump_px = float(max_reacquire_jump_px)
         self.occlusion_grace_frames = int(occlusion_grace_frames)
         self.far_reacquire_confirm_frames = int(far_reacquire_confirm_frames)
         self.ai_fusion_weight = float(ai_fusion_weight)
+        # Only safe when the HSV source is restricted to the maze interior, so
+        # that a reference dot cannot be the candidate.
+        self.trust_hsv_alone = bool(trust_hsv_alone)
         self.last_position = None
         self.missing_frames = 0
         self.pending_ai_position = None
@@ -122,9 +126,28 @@ class HybridBallTracker:
             return confirmed if confirmed is not None else self._missing()
 
         if hsv_valid:
-            # Blue board markers can satisfy the HSV filter. Never let an
-            # HSV-only candidate become a measurement or reset the loss timer.
-            return self._missing()
+            hsv_position = np.asarray(hsv_position, dtype=np.float32)
+            if not self.trust_hsv_alone:
+                # Kept for an unmasked HSV source: blue board markers satisfy the
+                # colour filter, so a bare candidate can be a dot on the rim.
+                return self._missing()
+            # With a masked source that ambiguity is gone geometrically -- the
+            # dots sit 4-5 mm outside the maze edge and the search is clipped to
+            # the maze -- so HSV alone is allowed to carry the frame. This is the
+            # case the pairing exists for: the learned detector misses, most often
+            # on a fast marble, and colour still has it.
+            if self.last_position is None or self.missing_frames > 0:
+                confirmed = self._confirm_reacquisition(
+                    hsv_position, "hsv_reacquired_confirmed"
+                )
+                return confirmed if confirmed is not None else self._missing()
+            jump = self._distance(hsv_position, self.last_position)
+            if jump <= self.max_reacquire_jump_px:
+                return self._accept(hsv_position, "hsv_only")
+            confirmed = self._confirm_reacquisition(
+                hsv_position, "hsv_reacquired_confirmed"
+            )
+            return confirmed if confirmed is not None else self._missing()
 
         if ai_valid:
             ai_position = np.asarray(ai_position, dtype=np.float32)

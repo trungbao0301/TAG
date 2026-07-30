@@ -18,6 +18,8 @@ from std_msgs.msg import Bool, Float32, String
 
 from tag_interfaces.msg import StateEstimate, StateEstimateSub
 from tag_state_estimation.ai_marble_common import OnnxMarbleDetector
+from tag_state_estimation.core import hsv_marble
+from tag_state_estimation.core.hybrid_ball import HybridBallTracker
 from tag_state_estimation.core.ai_map_state import (
     AlphaBetaKinematics,
     MarkerQuadGuard,
@@ -135,6 +137,24 @@ class AiMapEstimatorNode(Node):
         # Do not re-fit this jointly with the dot spacing: that fit is discredited
         # (see MOVING_MARKER_SPACING_X_M) and the two parameters are correlated, so
         # its estimate of this one is worthless too.
+        # HSV marble detection alongside the learned one. off | shadow | fuse.
+        #
+        # Why it is worth having: losses cluster on a fast marble. Measured over
+        # 9088 steps, 0.5% exceeded 10 mm in a frame, but among the steps
+        # immediately before an episode-ending loss 6.9% did -- a 14x
+        # over-representation. Colour and a convnet do not fail on the same
+        # frames, so either one carrying the frame is better than neither.
+        #
+        # Why it was not here already: the marble is blue and so are the eight
+        # reference dots, so an unrestricted HSV candidate locks onto a dot.
+        # core/hsv_marble.py clips the search to the maze interior, which the dots
+        # sit 4-5 mm outside, and that removes the ambiguity geometrically rather
+        # than by guessing at blob sizes.
+        #
+        # shadow computes the candidate and logs whether it had the marble without
+        # letting it decide anything, which is how to measure the hit rate before
+        # handing it authority. fuse lets either detector carry the frame.
+        self.declare_parameter("hsv_marble_mode", "fuse")
         self.declare_parameter("marker_plane_height_m", 0.0)
         self.declare_parameter("marble_radius_m", 0.006)
         self.declare_parameter("corner_mask_radius_px", 12.0)
@@ -190,6 +210,15 @@ class AiMapEstimatorNode(Node):
                 self.get_parameter("ai_confidence_threshold").value
             ),
         )
+        self.hsv_marble_mode = str(
+            self.get_parameter("hsv_marble_mode").value
+        ).strip().lower()
+        self.hybrid_ball = HybridBallTracker(
+            trust_hsv_alone=self.hsv_marble_mode == "fuse"
+        )
+        self.hsv_marble_stats = {"ai": 0, "hsv": 0, "both": 0, "neither": 0}
+        self.last_ball_source = "ai"
+        self.last_hsv_xy = None
         self.camera_height_m = float(self.get_parameter("camera_height_m").value)
         self.marker_plane_height_m = float(
             self.get_parameter("marker_plane_height_m").value
@@ -464,11 +493,48 @@ class AiMapEstimatorNode(Node):
             exclude_centers_px=excluded,
             exclude_radius_px=self.corner_mask_radius_px if excluded is not None else 0.0,
         )
-        ball_xy = (
+        ai_xy = (
             np.asarray([detection.x_px, detection.y_px], dtype=np.float64)
             if detection.visible
             else None
         )
+        ball_xy = ai_xy
+        self.last_hsv_xy = None
+        if self.hsv_marble_mode in ("shadow", "fuse") and moving_valid:
+            hsv_xy = hsv_marble.detect_marble(frame, moving_rc)
+            key = (
+                "both" if (ai_xy is not None and hsv_xy is not None)
+                else "ai" if ai_xy is not None
+                else "hsv" if hsv_xy is not None
+                else "neither"
+            )
+            self.hsv_marble_stats[key] += 1
+            total = sum(self.hsv_marble_stats.values())
+            if total % 500 == 0:
+                counts = self.hsv_marble_stats
+                self.get_logger().info(
+                    "marble sources over %d frames: both %.1f%%, ai only %.1f%%, "
+                    "hsv only %.1f%%, neither %.1f%% -- 'hsv only' is what the "
+                    "pairing buys"
+                    % (
+                        total,
+                        100.0 * counts["both"] / total,
+                        100.0 * counts["ai"] / total,
+                        100.0 * counts["hsv"] / total,
+                        100.0 * counts["neither"] / total,
+                    )
+                )
+            self.last_hsv_xy = hsv_xy
+            if self.hsv_marble_mode == "fuse":
+                fused = self.hybrid_ball.update(
+                    hsv_position=hsv_xy, ai_position=ai_xy
+                )
+                if np.all(np.isfinite(fused.position)):
+                    ball_xy = np.asarray(fused.position, dtype=np.float64)
+                    self.last_ball_source = fused.source
+                else:
+                    ball_xy = None
+                    self.last_ball_source = fused.source
 
         status = pose_status
         measurement = map_ai_pixel(
@@ -561,6 +627,28 @@ class AiMapEstimatorNode(Node):
                     tuple(np.round(corner[::-1] + [5, -5]).astype(int)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1
                 )
+            # The maze mask the HSV search is clipped to. Everything outside it
+            # is where the reference dots live, so seeing it is how you check the
+            # two are actually separated on this board rather than in principle.
+            if self.hsv_marble_mode != "off" and moving_valid:
+                polygon = hsv_marble.maze_polygon_px(moving_rc)
+                if polygon is not None:
+                    cv2.polylines(
+                        display, [polygon.astype(np.int32)], True, (0, 200, 255), 1
+                    )
+            # Each detector drawn separately, so a disagreement is visible rather
+            # than averaged away: magenta square is colour, yellow diamond is the
+            # learned detector, green circle is what was published.
+            if self.last_hsv_xy is not None:
+                cv2.drawMarker(
+                    display, tuple(np.round(self.last_hsv_xy).astype(int)),
+                    (255, 0, 255), cv2.MARKER_SQUARE, 16, 2
+                )
+            if ai_xy is not None:
+                cv2.drawMarker(
+                    display, tuple(np.round(ai_xy).astype(int)),
+                    (0, 255, 255), cv2.MARKER_DIAMOND, 16, 2
+                )
             if valid:
                 cv2.circle(
                     display,
@@ -573,7 +661,30 @@ class AiMapEstimatorNode(Node):
                 display, status, (10, 24), cv2.FONT_HERSHEY_SIMPLEX,
                 0.6, (0, 255, 0) if valid else (0, 0, 255), 2
             )
-            cv2.imshow("AI Map Estimator", display)
+            if self.hsv_marble_mode != "off":
+                counts = self.hsv_marble_stats
+                total = max(1, sum(counts.values()))
+                cv2.putText(
+                    display,
+                    "hsv=%s ai=%s  src=%s" % (
+                        "yes" if self.last_hsv_xy is not None else "no",
+                        "yes" if ai_xy is not None else "no",
+                        self.last_ball_source,
+                    ),
+                    (10, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
+                )
+                cv2.putText(
+                    display,
+                    "both %.0f%%  ai only %.0f%%  HSV ONLY %.0f%%  neither %.0f%%"
+                    % (
+                        100.0 * counts["both"] / total,
+                        100.0 * counts["ai"] / total,
+                        100.0 * counts["hsv"] / total,
+                        100.0 * counts["neither"] / total,
+                    ),
+                    (10, 66), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 255, 200), 1
+                )
+            cv2.imshow("AI + HSV Map Estimator", display)
             if (cv2.waitKey(1) & 0xFF) in (ord("q"), 27):
                 rclpy.shutdown()
 
