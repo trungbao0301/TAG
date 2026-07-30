@@ -659,6 +659,19 @@ class TagGym(gym.Env):
     def _checkpoint_for_occlusion(self):
         return self._checkpoint_at(self.prev_pos_path)
 
+    def _sync_best_checkpoint(self):
+        """Move the bonus watermark without paying, after an uncredited jump.
+
+        The reference is relocated in two places that deliberately pay nothing --
+        the occlusion resync, and adopting a jump that persisted. Leaving the
+        watermark behind would then have the next _checkpoint_bonus_reward pay for
+        every checkpoint the relocation skipped over: measured, that paid +0.100
+        for arriving at checkpoint 8 through a detector dropout.
+        """
+        reached = self._checkpoint_at(self.prev_pos_path)
+        if reached > self.best_checkpoint:
+            self.best_checkpoint = reached
+
     def _checkpoint_bonus_reward(self):
         """Pay once for each waypoint passed, the first time it is passed.
 
@@ -839,31 +852,36 @@ class TagGym(gym.Env):
                 # The gap's travel was predicted, not measured, so it must not
                 # bankroll the next claim.
                 self.travel_since_credit = 0.0
-                # Adopting the new index unconditionally was wrong: it is the one
-                # path that moves prev_pos_path without any check, so a single
-                # detector dropout could teleport the reference anywhere the
-                # nearest corridor happened to be. Measured over 288 dropouts in
-                # one run, 33 of them left it reporting checkpoint 35 to 46 while
-                # the episode had scored under +0.07, i.e. the marble had never
-                # been near there. prev_pos_path is also fed to the agent as the
-                # progress observation, so that is not just a cosmetic number.
+                # Adopt where the marble actually is, and pay nothing for the gap.
                 #
-                # A gap of gap_sec bounds the travel at max_speed * gap_sec.
+                # An earlier version of this refused to adopt when the new index
+                # was further away than max_speed * gap_sec, on the grounds that a
+                # dropout should not be able to relocate the reference. That was
+                # backwards. Refusing leaves the reference behind the marble, so
+                # every following step claims the whole difference, trips the
+                # one-step rule, and is denied -- the log fills with the same jump
+                # eight times over and the episode either dies or limps to the
+                # 8-step adopt below. Dropouts happen 288 times in a run, so that
+                # is not an edge case.
+                #
+                # Adopting costs nothing, because no credit is paid for the
+                # difference. What must not follow is a checkpoint bonus for
+                # arriving here, so best_checkpoint moves with it silently.
                 reach_m = max(
                     self.anti_cheat_min_step_m,
                     self.anti_cheat_max_speed_mps * max(0.0, self.last_gap_sec),
                 )
                 jump_m = abs(curr_pos_path - self.prev_pos_path) * self.p.distance
-                if jump_m <= reach_m:
-                    self.prev_pos_path = curr_pos_path
-                else:
+                if jump_m > reach_m:
                     print(
                         "[Occlusion]: reacquired at "
                         f"{100.0 * curr_pos_path / max(1, self.p.num_points - 1):.1f}% "
-                        f"but only {reach_m:.3f}m was reachable in "
-                        f"{self.last_gap_sec:.2f}s; holding the reference at "
-                        f"{100.0 * self.prev_pos_path / max(1, self.p.num_points - 1):.1f}%"
+                        f"after {100.0 * self.prev_pos_path / max(1, self.p.num_points - 1):.1f}%, "
+                        f"a {jump_m:.3f}m jump against {reach_m:.3f}m reachable in "
+                        f"{self.last_gap_sec:.2f}s; adopting it without credit"
                     )
+                self.prev_pos_path = curr_pos_path
+                self._sync_best_checkpoint()
                 return self._stuck_reward(obs["states"][2:4])
 
             raw_step_progress = curr_pos_path - self.prev_pos_path
@@ -893,9 +911,15 @@ class TagGym(gym.Env):
             allowed_points = max(1, int(allowed_m / self.p.distance))
             shortcut_triggered = raw_step_progress > allowed_points
             single_step_triggered = shortcut_triggered or self.last_step_implausible
-            trigger_reason = (
-                "path_per_metre_rolled" if shortcut_triggered else "impossible_roll"
-            )
+            if not shortcut_triggered:
+                trigger_reason = "impossible_roll"
+            elif self.anti_cheat_travel_ratio > 0.0:
+                trigger_reason = "path_per_metre_rolled"
+            else:
+                # With the ratio off the budget is the flat cap, so calling it
+                # path-per-metre-rolled named a test that was not the one that
+                # fired.
+                trigger_reason = "one_step_over_cap"
 
             if (not self.cheat) and single_step_triggered:
                 self.implausible_jump_steps += 1
@@ -948,6 +972,7 @@ class TagGym(gym.Env):
                         "as the new reference without credit"
                     )
                     self.prev_pos_path = curr_pos_path
+                    self._sync_best_checkpoint()
                     self.implausible_jump_steps = 0
                     self.travel_since_credit = 0.0
                 return 0.0
