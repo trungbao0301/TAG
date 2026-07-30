@@ -207,7 +207,7 @@ exec "$PYTHON_BIN" -m dreamerv3.train \
   --logdir "$LOGDIR" \
   --replay_size 1e6 \
   --run.script train_top5 \
-  --run.train_ratio 256 \
+  --run.train_ratio 128 \
   --run.save_every 20 \
   --run.log_every 1 \
   --jax.policy_devices 0 \
