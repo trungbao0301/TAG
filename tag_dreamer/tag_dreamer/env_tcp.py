@@ -264,6 +264,9 @@ class TagGym(gym.Env):
         # kept rolling while it was hidden, but prev_pos_path is from before the
         # gap, so the whole gap's travel would be charged to one step.
         self.resync_progress_after_gap = False
+        # How long the last occlusion gap lasted, which bounds how far the marble
+        # could have travelled while it was unseen.
+        self.last_gap_sec = 0.0
 
         self.path_tolerance = max(
             0.0,
@@ -489,6 +492,7 @@ class TagGym(gym.Env):
         self.anti_cheat_triggered = False
         self.implausible_jump_steps = 0
         self.resync_progress_after_gap = False
+        self.last_gap_sec = 0.0
         self.travel_since_credit = 0.0
         self.last_step_pos = None
         self.last_step_implausible = False
@@ -562,6 +566,11 @@ class TagGym(gym.Env):
             return self._obs_for_missing_ball(rep)
 
         was_occluded = self.ball_occluded
+        gap_sec = (
+            time.monotonic() - self.ball_missing_since
+            if self.ball_missing_since is not None
+            else 0.0
+        )
         self.ball_detected = True
         self.ball_occluded = False
         self.ball_missing_since = None
@@ -593,7 +602,12 @@ class TagGym(gym.Env):
         self._remember_visible_ball(self.obs)
         if was_occluded:
             # Re-reference progress on the next reward so the travel that
-            # happened while hidden is not charged to a single step.
+            # happened while hidden is not charged to a single step. How long the
+            # gap lasted bounds how far the marble could have gone, and
+            # _get_reward needs that to decide whether the new reference is
+            # reachable at all -- so capture it here, before ball_missing_since
+            # was cleared above.
+            self.last_gap_sec = gap_sec
             self.resync_progress_after_gap = True
             print("[Occlusion]: BALL REACQUIRED")
         return self._copy_obs(self.obs)
@@ -747,11 +761,35 @@ class TagGym(gym.Env):
             if self.resync_progress_after_gap:
                 self.resync_progress_after_gap = False
                 self.implausible_jump_steps = 0
-                self.prev_pos_path = curr_pos_path
                 self.progress = 0
                 # The gap's travel was predicted, not measured, so it must not
                 # bankroll the next claim.
                 self.travel_since_credit = 0.0
+                # Adopting the new index unconditionally was wrong: it is the one
+                # path that moves prev_pos_path without any check, so a single
+                # detector dropout could teleport the reference anywhere the
+                # nearest corridor happened to be. Measured over 288 dropouts in
+                # one run, 33 of them left it reporting checkpoint 35 to 46 while
+                # the episode had scored under +0.07, i.e. the marble had never
+                # been near there. prev_pos_path is also fed to the agent as the
+                # progress observation, so that is not just a cosmetic number.
+                #
+                # A gap of gap_sec bounds the travel at max_speed * gap_sec.
+                reach_m = max(
+                    self.anti_cheat_min_step_m,
+                    self.anti_cheat_max_speed_mps * max(0.0, self.last_gap_sec),
+                )
+                jump_m = abs(curr_pos_path - self.prev_pos_path) * self.p.distance
+                if jump_m <= reach_m:
+                    self.prev_pos_path = curr_pos_path
+                else:
+                    print(
+                        "[Occlusion]: reacquired at "
+                        f"{100.0 * curr_pos_path / max(1, self.p.num_points - 1):.1f}% "
+                        f"but only {reach_m:.3f}m was reachable in "
+                        f"{self.last_gap_sec:.2f}s; holding the reference at "
+                        f"{100.0 * self.prev_pos_path / max(1, self.p.num_points - 1):.1f}%"
+                    )
                 return self._stuck_reward(obs["states"][2:4])
 
             raw_step_progress = curr_pos_path - self.prev_pos_path

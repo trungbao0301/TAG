@@ -31,7 +31,18 @@ export PYTHONPATH="$PROJECT_ROOT/dreamerv3:$PROJECT_ROOT/install/tag_dreamer/lib
 # inside the grace window env_tcp feeds last_valid_ball_pos + velocity * dt
 # instead of a measurement, so the window's frames are extrapolated, not
 # observed. 0.10 s caps that at ~3 frames per episode end.
-export TAG_BALL_LOSS_GRACE_SEC=0.10
+# 0.20 s, raised from 0.10 s. 0.10 s was sized against a 25 Hz loop, i.e. 2-3
+# frames, but the loop actually runs at p10 19.3 / p50 25.3 fps, so a frame is
+# 31-52 ms and 0.10 s buys only two of them. Every measured loss confirmed at
+# 0.10-0.15 s, which is the first frame past the grace rather than evidence the
+# marble was really gone -- and episodes were ending with the marble plainly
+# still on the board and nowhere near a hole. 0.20 s is 5-6 frames.
+#
+# The cost is that the grace window feeds predicted positions rather than
+# measured ones, so it doubles from ~3 to ~6 substituted frames per gap. That is
+# safer than it was: the reference can no longer be teleported on reacquire,
+# because the resync now refuses an index further away than max_speed * gap.
+export TAG_BALL_LOSS_GRACE_SEC=0.20
 # Left at 0 on purpose: the longer occlusion grace only applies inside the
 # zones configured below, and both zone lists are empty, so all 166 losses
 # were classified source=outside_zone and never consulted this value.
