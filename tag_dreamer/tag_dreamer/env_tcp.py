@@ -225,6 +225,32 @@ class TagGym(gym.Env):
         self.travel_since_credit = 0.0
         self.last_step_pos = None
         self.last_step_implausible = False
+        # Off-path termination, the original env's whole anti-shortcut rule.
+        # closest_idx is -1 wherever a cell either cannot see any path point
+        # past the walls, or sits on the ridge where the credited index jumps
+        # between two different corridors -- precisely the route a 25 mm
+        # sideways hop onto a corridor 811 mm further along would take. Ending
+        # the episode there makes the shortcut geometrically impossible instead
+        # of something a numeric threshold has to catch after the fact.
+        #
+        # Requires the rebuilt grid. As shipped, closest_idx credited only 16.6%
+        # of recorded marble positions because a build-time pass over-painted
+        # 49.8% of cells, so this rule would have ended nearly every episode.
+        # tools/rebuild_path_grid.py restores that to 80.4% while keeping zero
+        # adjacent credited pairs whose index jumps more than 57 mm of path.
+        self.off_path = False
+        self.off_path_steps = 0
+        self.off_path_triggered = False
+        # The original terminated on the first off-path frame. 2 here because
+        # this detector loses the marble often enough to matter -- 29 BALL
+        # HIDDEN events over 13 episodes -- and one bad frame should not end an
+        # episode. Set to 1 for the original's behaviour.
+        self.off_path_confirm_steps = max(
+            1, int(os.environ.get("TAG_OFFPATH_CONFIRM_STEPS", "2"))
+        )
+        self.off_path_penalty = float(
+            os.environ.get("TAG_OFFPATH_PENALTY", str(self.reward_on_fail))
+        )
         # A detector flip reverts within a frame or two; a real hop does not.
         # After this many consecutive denials the new position is adopted as the
         # scoring reference, still without credit, so one bad jump cannot mute
@@ -376,7 +402,9 @@ class TagGym(gym.Env):
             f"max_speed={self.anti_cheat_max_speed_mps:.2f}m/s, "
             f"confirm_steps={self.anti_cheat_confirm_steps}, "
             f"resync_steps={self.anti_cheat_resync_steps}, "
-            f"penalty={self.anti_cheat_penalty:.3f}"
+            f"penalty={self.anti_cheat_penalty:.3f}, "
+            f"offpath_confirm={self.off_path_confirm_steps}, "
+            f"offpath_penalty={self.off_path_penalty:.3f}"
         )
 
     def _request(self, obj):
@@ -405,6 +433,8 @@ class TagGym(gym.Env):
         if done and not self.success:
             if self.anti_cheat_triggered:
                 reward = self.anti_cheat_penalty
+            elif self.off_path_triggered:
+                reward = self.off_path_penalty
             elif timed_out:
                 reward = self.timeout_penalty
             else:
@@ -455,6 +485,9 @@ class TagGym(gym.Env):
         self.travel_since_credit = 0.0
         self.last_step_pos = None
         self.last_step_implausible = False
+        self.off_path = False
+        self.off_path_steps = 0
+        self.off_path_triggered = False
         self.ball_detected = False
         self.ball_occluded = False
         self.ball_missing_since = None
@@ -693,8 +726,15 @@ class TagGym(gym.Env):
         else:
             curr_pos_path, p = self._closest_point(obs["states"][2:4])
             if curr_pos_path == -1:
+                # No credited cell here: either walled off from the path or on a
+                # corridor-to-corridor ridge. _get_done turns a run of these
+                # into a terminal, so leaving the corridor is what stops a hop.
+                self.off_path = True
+                self.off_path_steps += 1
                 self.progress = 0
                 return 0.0
+            self.off_path = False
+            self.off_path_steps = 0
             # Reacquired after an occlusion gap: adopt the current position as
             # the new reference instead of charging the gap's travel to one step.
             if self.resync_progress_after_gap:
@@ -719,10 +759,18 @@ class TagGym(gym.Env):
             #   flip      -- the detector reported the marble somewhere it never
             #                was. The claimed roll is itself impossible, so the
             #                ratio looks honest (~1) while the speed does not.
-            allowed_m = max(
-                self.anti_cheat_min_step_m,
-                self.anti_cheat_travel_ratio * self.travel_since_credit,
-            )
+            if self.anti_cheat_travel_ratio > 0.0:
+                allowed_m = max(
+                    self.anti_cheat_min_step_m,
+                    self.anti_cheat_travel_ratio * self.travel_since_credit,
+                )
+            else:
+                # Ratio disabled: fall back to the flat one-step cap the original
+                # env used as its only numeric rule. That is the right default
+                # once the grid blocks corridor hops structurally, because then
+                # this only has to catch a detector flip that lands inside a
+                # credited cell.
+                allowed_m = self.anti_cheat_max_step_m
             allowed_points = max(1, int(allowed_m / self.p.distance))
             shortcut_triggered = raw_step_progress > allowed_points
             single_step_triggered = shortcut_triggered or self.last_step_implausible
@@ -881,6 +929,20 @@ class TagGym(gym.Env):
             print(
                 "[Done]: ANTI-CHEAT PROGRESS JUMP; "
                 f"penalty={self.anti_cheat_penalty:.3f}"
+            )
+            self._send_action(np.zeros((2,), dtype=np.float32))
+
+        if (
+            not self.cheat
+            and self.off_path
+            and self.off_path_steps >= self.off_path_confirm_steps
+        ):
+            self.off_path_triggered = True
+            done = True
+            print(
+                f"[Done]: OFFPATH after {self.off_path_steps} frames "
+                f"at {100.0 * self.prev_pos_path / max(1, self.p.num_points - 1):.1f}%; "
+                f"penalty={self.off_path_penalty:.3f}"
             )
             self._send_action(np.zeros((2,), dtype=np.float32))
 

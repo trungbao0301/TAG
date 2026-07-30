@@ -136,3 +136,32 @@ def test_slow_frame_relaxes_the_speed_cap_but_not_the_ratio():
     assert env.travel_since_credit == pytest.approx(0.120, abs=1e-3)
     claimed_points = int(0.811 / PATH_STEP_M)
     assert claimed_points * PATH_STEP_M > allowed_m(env)
+
+
+def budget(env):
+    """What _get_reward allows for a claim, ratio on or off."""
+    if env.anti_cheat_travel_ratio > 0.0:
+        return max(
+            env.anti_cheat_min_step_m,
+            env.anti_cheat_travel_ratio * env.travel_since_credit,
+        )
+    return env.anti_cheat_max_step_m
+
+
+def test_ratio_zero_selects_the_original_flat_cap():
+    """Ratio 0 must fall back to 57 mm, not collapse to the 10 mm floor."""
+    env = make_env(anti_cheat_travel_ratio=0.0, anti_cheat_max_step_m=0.057)
+    roll(env, (0.0, 0.0), (0.001, 0.0))
+    assert budget(env) == pytest.approx(0.057)
+    # A hop is still rejected by it...
+    assert 0.811 > budget(env)
+    # ...and ordinary motion is not, however little was banked.
+    assert 0.020 < budget(env)
+
+
+def test_ratio_on_is_tighter_than_the_flat_cap_for_a_small_roll():
+    """With the ratio on, 4 mm rolled must not license the flat 57 mm."""
+    env = make_env(anti_cheat_travel_ratio=3.0, anti_cheat_max_step_m=0.057)
+    roll(env, (0.0, 0.0), (0.004, 0.0))
+    assert budget(env) == pytest.approx(0.012)
+    assert budget(env) < env.anti_cheat_max_step_m

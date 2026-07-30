@@ -40,41 +40,24 @@ export TAG_OCCLUSION_XY_ZONES=""
 export TAG_OCCLUSION_CHECKPOINT_RANGES=""
 unset TAG_OCCLUSION_ZONES_FILE
 
-# How far off the path line the marble may be and still be given a progress
-# index. This defaults to ball_radius (6 mm), which turns out to be the single
-# biggest throttle on the reward signal: measured over 242664 recorded marble
-# positions the distance to the nearest path point is 5.5 mm (p50) but 10.7 mm
-# (p90), so 6 mm scores only 52.6% of frames. The other 47.4% get no progress
-# credit AND a zeroed goal vector, i.e. no steering hint either. The
-# precomputed grid inside path_custom.pkl is meant to cover the corridor and
-# would make this moot, but it returns a valid index for only 5.5% of real
-# positions, so this tolerance is carrying the whole lookup.
+# 0 disables the geometric repair in _closest_point, so a cell the grid marks
+# -1 stays -1 instead of being handed the nearest path point anyway.
 #
-# A position is ambiguous when a second corridor more than 150 indices away
-# sits within 3 mm of the nearest one, i.e. detector noise could pick the wrong
-# corridor and the goal vector would point down it. Measured over 246760 real
-# positions, aggregated across everything the tolerance accepts:
+# That repair was only ever needed because the shipped grid was broken: it
+# credited 16.6% of recorded marble positions, so without a tolerance the maze
+# was unplayable, and the tolerance had to be pushed to 24 mm to reach 97.8%.
+# But the repair reads a path index for cells the grid deliberately blanked --
+# including the ridges between corridors -- which is exactly how the 25 mm hop
+# onto a corridor 811 mm further along became payable. The workaround defeated
+# the mechanism it was working around.
 #
-#    <=12 mm   93.3% of frames scored   0.0% of them ambiguous
-#    <=24 mm   97.8% of frames scored   0.8% of them ambiguous
-#
-# So 24 mm buys the last 4.5% of frames for 0.8% ambiguity overall -- the added
-# 12-24 mm band is 4.4% of frames at 9.5% ambiguity, i.e. 0.42% of all frames
-# misassigned. Worth it: a scored frame with an approximate corridor beats an
-# unscored one, and the anti-cheat's path-per-metre-rolled test independently
-# refuses to pay for a claim the marble did not roll for.
-#
-# Do not go further and drop the limit entirely to match
-# overlay_map_view_simple.py:420, which falls back to an unbounded argmin. The
-# farthest position ever observed is 45.6 mm, and the 24-45 mm range is a marble
-# in a hole or off the board -- real junk, worth excluding. Unbounded is fine
-# for the overlay because nothing is scored from it.
-#
-# The worst-case geometric bound is far tighter -- |A-B| <= 2T against a 20 mm
-# minimum corridor separation argues for T < 10 mm -- but that bounds a marble
-# sitting exactly between two corridors, and the measured distribution says that
-# is 0.8% of frames at 24 mm, not the common case.
-export TAG_PATH_TOLERANCE_M=0.024
+# tools/rebuild_path_grid.py fixes the grid instead. Restoring cells within
+# 10 mm of their own corridor takes credited marble frames from 16.6% to 80.4%
+# and the path's own centreline from 89.7% to 100%, while leaving zero adjacent
+# credited pairs whose index jumps more than 57 mm of path -- so no hop is
+# payable and no tolerance is needed. Thresholds past 10 mm buy almost nothing
+# and break that: 12 mm adds 0.9 points of marble coverage and 2 jump pairs.
+export TAG_PATH_TOLERANCE_M=0
 
 # Penalty for losing the marble down a hole. Sized against the reward scale: the
 # full path is worth only 9294 pts * 0.004/16 = 2.324, so -0.20 was 8.6% of a
@@ -110,26 +93,26 @@ export TAG_ANTICHEAT_MIN_STEP_M=0.010
 # value; revisit only after marble detection is reliable.
 export TAG_ANTICHEAT_MAX_SPEED_MPS=1.0
 export TAG_ANTICHEAT_CONFIRM_STEPS=3
-export TAG_ANTICHEAT_ENABLED=0
+export TAG_ANTICHEAT_ENABLED=1
 export TAG_ANTICHEAT_PENALTY=-0.15
+export TAG_ALLOW_CHEAT=0
 
-# Whole progress check OFF, pending a different design.
-#
-# Predicting from 41 episodes of the previous run -- 59 strike streaks, 58 of
-# length 1, one of length 2, none of length 5 -- that a confirm threshold of 3
-# would cost nothing was wrong: with termination on it ended 4 of 23 episodes,
-# 17%. Those terminations at -0.15 each account for about -0.026 of the -0.0253
-# mean return, i.e. the penalty, not the maze, was driving the learning signal.
-# The likely reason the prediction missed is that the earlier measurement ran at
-# a 12 mm path tolerance and this run uses 24 mm, so more frames carry a path
-# index and there is more opportunity for a streak to extend.
-#
-# What this costs, stated plainly: corridors run 20-25 mm apart and index 0 sits
-# 24.9 mm from index 4055, so a 25 mm sideways hop now pays 811 mm of path, about
-# +0.20 in a single step -- more than a good episode earns end to end. Nothing
-# stops the policy from learning to hunt hops instead of driving the maze. Watch
-# episode/score for returns that jump well past what the frontier justifies.
-export TAG_ALLOW_CHEAT=1
+# Ratio test off: the grid now blocks corridor hops structurally, so the only
+# numeric rule still needed is the flat one-step cap the original env used,
+# which TAG_ANTICHEAT_MAX_STEP_M above already sets to its 0.057 m. Setting the
+# ratio to 0 selects exactly that. The ratio was a workaround for a grid that
+# could not block hops itself, and it never found a threshold that both caught
+# the hop and left honest motion alone -- at 3.0 with confirm 3 it ended 4 of 23
+# episodes.
+export TAG_ANTICHEAT_TRAVEL_RATIO=0
+
+# Off-path termination, which is the original env's entire anti-shortcut rule:
+# a cell the grid will not credit ends the episode. A hop between corridors has
+# to cross those cells, so it cannot be taken at all rather than having to be
+# detected. 2 frames rather than the original's 1 because this detector loses
+# the marble often enough that a single frame should not end an episode.
+export TAG_OFFPATH_CONFIRM_STEPS=2
+export TAG_OFFPATH_PENALTY=-0.05
 
 export TAG_STUCK_WINDOW_SEC=5
 export TAG_STUCK_RADIUS_M=0.003
