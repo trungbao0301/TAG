@@ -133,9 +133,9 @@ def build(p, layout, zones_mm, base="visibility", wall_mm=3.0,
           hole_margin_mm=0.0, holes_mode="allow"):
     """Credit cells, minus the chosen rectangles.
 
-    base="visibility" credits only where the walls let a path point be seen.
-    base="open" credits the whole board except wall bodies and hole mouths, which
-    is a blunter starting point but a predictable one to draw zones onto.
+    base="all" credits every cell, so the only thing that is ever off-path is
+    what has been painted. base="open" also excludes wall bodies, and
+    base="visibility" only credits where the walls let a path point be seen.
     """
     import rebuild_path_grid as R
     from scipy.spatial import cKDTree
@@ -147,7 +147,12 @@ def build(p, layout, zones_mm, base="visibility", wall_mm=3.0,
     _, near = cKDTree(p.points).query(np.column_stack([xs.ravel(), ys.ravel()]))
     near = near.reshape(ny, nx)
 
-    if base == "open":
+    if base == "all":
+        # Everything credited, nothing excluded. The operator paints every trap,
+        # including walls if they want them to end the episode. Until something
+        # is painted the marble is never off-path.
+        allowed = np.ones((ny, nx), dtype=bool)
+    elif base == "open":
         allowed = ~solid_mask(p, layout, wall_mm, hole_margin_mm, holes_mode)
     else:
         x1, x2, y1, y2 = R.boxes(p, layout)
@@ -173,7 +178,7 @@ def report(p, grid, allowed, marble=None):
     r = np.clip((p.points[:, 1] / cell).astype(int), 0, ny - 1)
     c = np.clip((p.points[:, 0] / cell).astype(int), 0, nx - 1)
     print(f"  cells credited   : {100 * ok.mean():5.1f}%  "
-          f"(walls allow at most {100 * allowed.mean():.1f}%)")
+          f"(the chosen base allows at most {100 * allowed.mean():.1f}%)")
     print(f"  centreline        : {100 * ok[r, c].mean():5.1f}%   want 100%")
     if marble is not None:
         mr = np.clip((marble[:, 1] / cell).astype(int), 0, ny - 1)
@@ -201,9 +206,10 @@ def main():
     ap.add_argument("--logdir", default="", help="a run logdir, to score real play")
     ap.add_argument("--scale", type=float, default=2.4, help="display px per mm")
     ap.add_argument(
-        "--base", choices=("visibility", "open"), default="open",
-        help="open: whole board minus wall bodies and holes. visibility: only "
-             "where the walls let a path point be seen.",
+        "--base", choices=("all", "visibility", "open"), default="all",
+        help="all: the whole board credited, you paint every trap. open: minus "
+             "wall bodies. visibility: only where the walls let a path point be "
+             "seen.",
     )
     ap.add_argument(
         "--wall_mm", type=float, default=3.0,
