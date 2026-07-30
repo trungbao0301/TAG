@@ -126,7 +126,19 @@ export TAG_ANTICHEAT_MAX_SPEED_MPS=1.0
 # it fired on 1-2 of every ~22 episodes. If at 1 it climbs past that, the flips
 # are being charged, and 2 is the smaller step back rather than 3.
 export TAG_ANTICHEAT_CONFIRM_STEPS=1
-export TAG_ANTICHEAT_ENABLED=1
+# 0: the 57 mm one-step rule no longer ends an episode or charges anything. It is
+# not needed to stop shortcuts any more -- the grid blanks the crossings and
+# off_path ends the episode on them -- and what it was actually doing was charging
+# -0.15 for detector flips, on 4 of 23 episodes, which is about -0.026 of average
+# return against the +0.05 an episode earns.
+#
+# TAG_ALLOW_CHEAT stays 0, so the rule still REFUSES TO PAY for a 57 mm one-step
+# advance even though it no longer punishes it. That half costs nothing and is
+# worth keeping: a detector flip that lands on a credited cell 100 mm along the
+# path would otherwise be paid +0.125, which is more than an episode earns, and
+# fabricated reward is the failure mode this whole file has been chasing. Set
+# TAG_ALLOW_CHEAT=1 to remove the rule completely.
+export TAG_ANTICHEAT_ENABLED=0
 # -0.15, three times the -0.05 charged for a hole. It has to be the heavier of
 # the two: they both end the episode, so if cheating cost the same or less there
 # would be no reason to prefer driving the maze. Against a full path worth 2.324
