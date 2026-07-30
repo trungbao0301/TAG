@@ -116,10 +116,21 @@ class AiMapEstimatorNode(Node):
         # frames and on 47.6% of episode-start frames, which is what makes
         # episodes begin off-path and die in a few steps.
         #
-        # It is not established that this is the cause: the push is only 1.4% and
-        # applies to x and y alike, while the problem is y-specific. The check
-        # after changing it is the off-board fraction, not a plausibility
-        # argument. Put it back to 0.010 if that fraction does not move.
+        # It looked like it could not be the cause -- the push is 1.4% and
+        # isotropic, while the problem was y-specific -- but the measurement says
+        # otherwise. Over a training run at 0, against the same measurement at
+        # 0.010:
+        #
+        #     y reported off the board     43.0%  ->  0.00%
+        #     frames inside the corridor   79.9%  ->  93.6%
+        #     episode starts inside it     52.0%  ->  92.9%
+        #     episodes ended by OFFPATH    49/57  ->  0
+        #     median episode length       10 steps -> 68 steps
+        #
+        # The 1.4% was enough because the marble spends its time on the outer
+        # corridors, a few mm from the rim, where 1.4% of 115 mm is the whole
+        # margin. Keep at 0 unless a direct measurement of the dot plane says
+        # otherwise.
         #
         # Do not re-fit this jointly with the dot spacing: that fit is discredited
         # (see MOVING_MARKER_SPACING_X_M) and the two parameters are correlated, so
