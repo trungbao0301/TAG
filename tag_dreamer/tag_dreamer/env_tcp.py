@@ -224,6 +224,7 @@ class TagGym(gym.Env):
         # every later step in that episode was denied too.
         self.travel_since_credit = 0.0
         self.last_step_pos = None
+        self.segment_start = None
         self.last_step_implausible = False
         # Off-path termination, the original env's whole anti-shortcut rule.
         # closest_idx is -1 wherever a cell either cannot see any path point
@@ -515,6 +516,7 @@ class TagGym(gym.Env):
         self.best_checkpoint = 0
         self.travel_since_credit = 0.0
         self.last_step_pos = None
+        self.segment_start = None
         self.last_step_implausible = False
         self.off_path = False
         self.off_path_steps = 0
@@ -658,6 +660,37 @@ class TagGym(gym.Env):
 
     def _checkpoint_for_occlusion(self):
         return self._checkpoint_at(self.prev_pos_path)
+
+    def _crossed_blocked(self, start, end):
+        """Whether the straight step from start to end passes over a blanked cell.
+
+        Sampling only where the marble ended up misses every trap thinner than one
+        step. Measured: steps are p50 0.4 mm but p90 4.9 mm and p99 32.7 mm, with a
+        156 mm maximum, while the sealed corridor boundaries are 0.2-0.4 mm wide
+        and the painted zones 2.1-14.6 mm across their narrow side. So 48.9% of
+        steps are long enough to hop a boundary line and 22.3% to hop the
+        narrowest zone -- and a marble taking a shortcut is rolling fast, which is
+        exactly when steps are longest. Walking the segment at grid resolution
+        closes that.
+        """
+        if start is None or self.p.closest_idx is None:
+            return False
+        start = np.asarray(start, dtype=np.float64)
+        end = np.asarray(end, dtype=np.float64)
+        if not (np.all(np.isfinite(start)) and np.all(np.isfinite(end))):
+            return False
+        cell = self.p.distance
+        span = float(np.linalg.norm(end - start))
+        steps = int(span / cell)
+        if steps < 2:
+            return False
+        grid = self.p.closest_idx
+        ny, nx = grid.shape
+        ts = np.linspace(0.0, 1.0, min(steps, 1200))
+        points = start[None, :] + ts[:, None] * (end - start)[None, :]
+        rows = np.clip((points[:, 1] / cell).astype(int), 0, ny - 1)
+        cols = np.clip((points[:, 0] / cell).astype(int), 0, nx - 1)
+        return bool(np.any(grid[rows, cols] == -1))
 
     def _sync_best_checkpoint(self):
         """Move the bonus watermark without paying, after an uncredited jump.
@@ -841,6 +874,12 @@ class TagGym(gym.Env):
                 self.off_path_steps += 1
                 self.progress = 0
                 return 0.0
+            if self._crossed_blocked(self.segment_start, obs["states"][2:4]):
+                # Ended somewhere credited, but got there through a trap.
+                self.off_path = True
+                self.off_path_steps += 1
+                self.progress = 0
+                return 0.0
             self.off_path = False
             self.off_path_steps = 0
             # Reacquired after an occlusion gap: adopt the current position as
@@ -999,10 +1038,14 @@ class TagGym(gym.Env):
             return
         if self.last_step_pos is None:
             self.last_step_pos = position.copy()
+            self.segment_start = None
             self.last_step_implausible = False
             return
 
         moved = float(np.linalg.norm(position - self.last_step_pos))
+        # Where this step began, kept because _crossed_blocked needs the segment
+        # and last_step_pos is about to become its end.
+        self.segment_start = self.last_step_pos.copy()
         self.last_step_pos = position.copy()
 
         step_dt = time.time() - self.last_time

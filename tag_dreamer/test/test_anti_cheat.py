@@ -159,6 +159,64 @@ def test_ratio_zero_selects_the_original_flat_cap():
     assert 0.020 < budget(env)
 
 
+def blocked_env(blocked_cols):
+    """A 100x100 grid at 0.2 mm/cell, with the given columns blanked."""
+    grid = np.zeros((100, 100), dtype=np.int64)
+    for c in blocked_cols:
+        grid[:, c] = -1
+    return types.SimpleNamespace(
+        p=types.SimpleNamespace(closest_idx=grid, distance=0.0002)
+    )
+
+
+def crossed(env, x0_mm, x1_mm, y_mm=10.0):
+    return TagGym._crossed_blocked(
+        env,
+        np.array([x0_mm / 1000.0, y_mm / 1000.0]),
+        np.array([x1_mm / 1000.0, y_mm / 1000.0]),
+    )
+
+
+def test_step_over_a_thin_trap_is_caught():
+    """The whole point: a 0.2 mm line must not be jumpable in one step."""
+    env = blocked_env([50])                        # one cell, 0.2 mm wide, at 10 mm
+    assert crossed(env, 8.0, 12.0) is True         # a 4 mm step straddling it
+
+
+def test_step_that_stops_short_of_the_trap_is_not_caught():
+    env = blocked_env([50])
+    assert crossed(env, 5.0, 9.5) is False
+
+
+def test_step_beyond_a_wide_trap_is_caught():
+    env = blocked_env(range(40, 60))               # 4 mm wide, 8.0-12.0 mm
+    assert crossed(env, 4.0, 16.0) is True
+
+
+def test_a_step_shorter_than_a_cell_is_ignored():
+    """Under one cell there is nothing to interpolate and no crossing to find."""
+    env = blocked_env([50])
+    assert crossed(env, 9.99, 10.0) is False
+
+
+def test_no_previous_position_means_no_crossing():
+    env = blocked_env([50])
+    assert TagGym._crossed_blocked(env, None, np.array([0.02, 0.01])) is False
+
+
+def test_nan_endpoint_means_no_crossing():
+    env = blocked_env([50])
+    assert TagGym._crossed_blocked(
+        env, np.array([0.005, 0.01]), np.array([float("nan"), 0.01])
+    ) is False
+
+
+def test_long_step_is_sampled_densely_enough():
+    """A 150 mm step -- the measured maximum -- still finds a single-cell trap."""
+    env = blocked_env([50])
+    assert crossed(env, 0.5, 150.0) is True
+
+
 def test_ratio_on_is_tighter_than_the_flat_cap_for_a_small_roll():
     """With the ratio on, 4 mm rolled must not license the flat 57 mm."""
     env = make_env(anti_cheat_travel_ratio=3.0, anti_cheat_max_step_m=0.057)
