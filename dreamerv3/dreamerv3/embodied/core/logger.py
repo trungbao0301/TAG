@@ -310,13 +310,21 @@ class MLFlowOutput:
 
 def _encode_gif(frames, fps):
     import shutil
+    import sys
     from subprocess import PIPE, Popen
 
     h, w, c = frames[0].shape
     pxfmt = {1: "gray", 3: "rgb24"}[c]
-    ffmpeg = shutil.which("ffmpeg") or "/home/tbt589/micromamba/envs/tag_ros/bin/ffmpeg"
+    # Resolved next to the interpreter that is running, not from a hardcoded
+    # path. The fallback used to name a specific conda environment, and a
+    # project-wide cyberrunner_ -> tag_ rename rewrote that env name even though
+    # it is an environment on the server rather than a package in this repo -- so
+    # every GIF summary failed with the file sitting right beside python3.
+    ffmpeg = shutil.which("ffmpeg") or os.path.join(
+        os.path.dirname(sys.executable), "ffmpeg"
+    )
     if not os.path.exists(ffmpeg):
-        raise OSError("ffmpeg was not found in PATH or the tag conda env")
+        raise OSError(f"ffmpeg not found on PATH or at {ffmpeg}")
     cmd = [
         ffmpeg,
         "-y",

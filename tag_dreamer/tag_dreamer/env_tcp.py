@@ -553,6 +553,11 @@ class TagGym(gym.Env):
             distances = np.linalg.norm(self.p.points - obs["states"][2:4], axis=1)
             path_idx = int(np.argmin(distances))
         self.prev_pos_path = path_idx
+        # Start the bonus watermark where the marble starts, not at 0. Left at 0
+        # it paid for every checkpoint between the origin and the reset position
+        # on the first scoring step of every episode -- observed as
+        # "reached 2/61, bonus=+0.040", two checkpoints at once for arriving.
+        self.best_checkpoint = self._checkpoint_at(path_idx)
         self.progress = 0
         self.last_time = time.time()
         self.episode_start_time = time.monotonic()
