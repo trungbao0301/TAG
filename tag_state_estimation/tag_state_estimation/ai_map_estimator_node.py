@@ -529,12 +529,11 @@ class AiMapEstimatorNode(Node):
                 fused = self.hybrid_ball.update(
                     hsv_position=hsv_xy, ai_position=ai_xy
                 )
-                if np.all(np.isfinite(fused.position)):
-                    ball_xy = np.asarray(fused.position, dtype=np.float64)
-                    self.last_ball_source = fused.source
+                self.last_ball_source = fused.source
+                if np.all(np.isfinite(fused.measurement)):
+                    ball_xy = np.asarray(fused.measurement, dtype=np.float64)
                 else:
                     ball_xy = None
-                    self.last_ball_source = fused.source
 
         status = pose_status
         measurement = map_ai_pixel(
