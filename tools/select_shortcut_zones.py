@@ -160,8 +160,6 @@ def build(p, layout, zones_mm, base="visibility", wall_mm=3.0,
         vis = R.visibility(p, x1, x2, y1, y2)
         npx, npy = p.points[near, 0], p.points[near, 1]
         allowed = vis & (npx >= x1) & (npx <= x2) & (npy >= y1) & (npy <= y2)
-    in_box = allowed
-
     blocked = np.zeros((ny, nx), dtype=bool)
     for x0, y0, x3, y3 in zones_mm:
         c0, c1 = int(min(x0, x3) / 1000 / cell), int(max(x0, x3) / 1000 / cell)
@@ -270,8 +268,10 @@ def main():
         print(f"  loaded {len(zones)} zone(s) from {args.zones}")
 
     def write(zones_now):
-        grid, _, allowed = build(p, layout, zones_now, args.base, args.wall_mm, args.hole_margin_mm, args.holes,
-                                     not args.no_seal, args.no_seal_below)
+        grid, _, allowed = build(
+            p, layout, zones_now, args.base, args.wall_mm, args.hole_margin_mm,
+            args.holes, not args.no_seal, args.no_seal_below,
+        )
         n = report(p, grid, allowed, marble)
         with open(args.zones, "w") as fh:
             json.dump({"zones_mm": zones_now}, fh, indent=2)
@@ -299,8 +299,10 @@ def main():
         return int(x_mm * s), int(H - y_mm * s)
 
     def recompute(zones_now):
-        grid, credited, allowed = build(p, layout, zones_now, args.base, args.wall_mm, args.hole_margin_mm, args.holes,
-                                     not args.no_seal, args.no_seal_below)
+        grid, credited, allowed = build(
+            p, layout, zones_now, args.base, args.wall_mm, args.hole_margin_mm,
+            args.holes, not args.no_seal, args.no_seal_below,
+        )
         hops, n = jump_mask(grid)
         return credited, allowed, hops, n
 

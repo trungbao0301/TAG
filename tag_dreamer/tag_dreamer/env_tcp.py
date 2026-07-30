@@ -4,7 +4,6 @@ import os
 import socket
 import time
 
-import cv2
 import gym
 import numpy as np
 from ament_index_python.packages import get_package_share_directory
@@ -920,10 +919,11 @@ class TagGym(gym.Env):
                 )
                 jump_m = abs(curr_pos_path - self.prev_pos_path) * self.p.distance
                 if jump_m > reach_m:
+                    last = max(1, self.p.num_points - 1)
                     print(
                         "[Occlusion]: reacquired at "
-                        f"{100.0 * curr_pos_path / max(1, self.p.num_points - 1):.1f}% "
-                        f"after {100.0 * self.prev_pos_path / max(1, self.p.num_points - 1):.1f}%, "
+                        f"{100.0 * curr_pos_path / last:.1f}% "
+                        f"after {100.0 * self.prev_pos_path / last:.1f}%, "
                         f"a {jump_m:.3f}m jump against {reach_m:.3f}m reachable in "
                         f"{self.last_gap_sec:.2f}s; adopting it without credit"
                     )
