@@ -101,15 +101,30 @@ class AiMapEstimatorNode(Node):
         # map_ai_pixel homographies the RAW dot pixels -- but alpha/beta come
         # from that PnP and may carry a scale-induced bias.
         self.declare_parameter("camera_height_m", 0.29)
-        # Height of the moving-dot plane above the play surface: 10 mm, MEASURED on
-        # this board. The dots sit on the moving rim, which stands above the maze
-        # floor, so the marble centre (6 mm up) is 4 mm BELOW the dot plane and
-        # map_ai_pixel's parallax term pushes positions outward rather than inward.
+        # Height of the moving-dot plane above the play surface. 10 mm was
+        # MEASURED on this board: the dots sit on the moving rim, which stands
+        # above the maze floor. Keep that number, because it is the measurement
+        # and this is not.
+        #
+        # Set to 0 to take the outward push out of the loop. At 10 mm the marble
+        # centre (6 mm up) is 4 mm BELOW the dot plane, so
+        #   parallax_scale = 1 - (0.006 - 0.010)/0.29 = 1.0138
+        # and reported positions are pushed away from the camera axis. At 0 it is
+        # 1 - 0.006/0.29 = 0.9793, pulled inward -- a 3.5% swing in absolute
+        # scale, the largest of any single parameter here. That matters because
+        # reported y currently lands outside the board's 229 mm edge on 43% of
+        # frames and on 47.6% of episode-start frames, which is what makes
+        # episodes begin off-path and die in a few steps.
+        #
+        # It is not established that this is the cause: the push is only 1.4% and
+        # applies to x and y alike, while the problem is y-specific. The check
+        # after changing it is the off-board fraction, not a plausibility
+        # argument. Put it back to 0.010 if that fraction does not move.
         #
         # Do not re-fit this jointly with the dot spacing: that fit is discredited
         # (see MOVING_MARKER_SPACING_X_M) and the two parameters are correlated, so
         # its estimate of this one is worthless too.
-        self.declare_parameter("marker_plane_height_m", 0.010)
+        self.declare_parameter("marker_plane_height_m", 0.0)
         self.declare_parameter("marble_radius_m", 0.006)
         self.declare_parameter("corner_mask_radius_px", 12.0)
         # Off by default: the detector, not the geometry, decides whether the
