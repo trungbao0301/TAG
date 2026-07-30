@@ -36,7 +36,13 @@ unset TAG_OCCLUSION_ZONES_FILE
 # progress reward can actually drive learning.
 export TAG_REWARD_ON_FAIL=-0.05
 export TAG_TIMEOUT_STEPS=3000
-export TAG_TIMEOUT_PENALTY=-0.20
+# TAG_TIMEOUT_PENALTY deliberately unset: env_tcp.py defaults it to
+# reward_on_fail, so it tracks the line above. It used to be pinned at -0.20,
+# which is the same inversion the comment above warns about, one level up:
+# 3000 steps is ~120 s of surviving at the measured 25 Hz, and that was charged
+# 4x what falling down a hole after 4 s costs. Under that ranking the cheapest
+# way out of a stretch the policy cannot solve is to drop the marble
+# immediately, so keeping it alive was the punished behaviour.
 # Anti-cheat. The budget is dt-scaled on purpose: allowed advance along the path
 # per step = min(MAX_STEP_M, max(MIN_STEP_M, MAX_SPEED_MPS * step_dt)). Do NOT
 # express "flag a 10 mm skip" as MAX_STEP_M=0.010 -- step_dt here ranges 40-800 ms
@@ -77,4 +83,5 @@ exec "$PYTHON_BIN" -m dreamerv3.train \
   --run.save_every 20 \
   --run.log_every 1 \
   --jax.policy_devices 0 \
-  --jax.train_devices 0
+  --jax.train_devices 0 \
+  "$@"
