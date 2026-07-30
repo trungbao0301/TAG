@@ -36,7 +36,7 @@ export PYTHONPATH="$PROJECT_ROOT/dreamerv3:$PROJECT_ROOT/install/tag_dreamer/lib
 # measured ones, so it doubles from ~3 to ~6 substituted frames per gap. That is
 # safer than it was: the reference can no longer be teleported on reacquire,
 # because the resync now refuses an index further away than max_speed * gap.
-export TAG_BALL_LOSS_GRACE_SEC=0.20
+export TAG_BALL_LOSS_GRACE_SEC=0
 # The grace that actually decides it, in frames rather than seconds. A dropout is
 # a count of frames the detector missed, so tolerating it in seconds means the
 # tolerance moves with the loop rate: at p10 19.3 fps the 0.20 s above is 3.9
@@ -44,7 +44,19 @@ export TAG_BALL_LOSS_GRACE_SEC=0.20
 # not depending on how busy the machine was. 6 frames is fixed. The seconds value
 # stays as a ceiling, because the grace window substitutes predicted positions
 # for measured ones and on a very slow frame that prediction is worthless.
-export TAG_BALL_LOSS_GRACE_FRAMES=6
+# 0: no grace. The first frame the detector cannot see the marble ends the
+# episode. Asked for, and consistent with letting the detector decide rather than
+# the geometry -- if the AI cannot see it, it is lost.
+#
+# What this buys: nothing predicted ever reaches the replay. Inside a grace window
+# env_tcp substitutes last_valid_ball_pos + velocity * dt for a measurement, so at
+# 6 frames a run was feeding up to 306 extrapolated frames per 40 episodes.
+#
+# What it costs, measured over those same 40 episodes: 126 BALL HIDDEN, of which
+# 51 were reacquired and would now each end an episode instead. Episodes get about
+# 2.3x shorter for the same amount of real play, so the collection rate drops with
+# them. The dropouts themselves are the actual problem and grace only hid them.
+export TAG_BALL_LOSS_GRACE_FRAMES=0
 
 # Paid once the first time each of the 61 waypoints is passed, on top of the
 # per-millimetre progress term. The progress term is smooth but gives nothing

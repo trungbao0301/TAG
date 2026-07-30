@@ -268,8 +268,11 @@ class TagGym(gym.Env):
         # 6 covers what was measured -- dropouts confirmed at 0.10-0.15 s across a
         # 19-32 fps loop, i.e. 2-5 frames -- and unlike a seconds budget it does
         # not shrink when the machine slows down.
+        # 0 means no grace at all: the first frame the detector cannot see the
+        # marble ends the episode, and no predicted position is ever substituted
+        # for a measurement.
         self.ball_loss_grace_frames = max(
-            1, int(os.environ.get("TAG_BALL_LOSS_GRACE_FRAMES", "6"))
+            0, int(os.environ.get("TAG_BALL_LOSS_GRACE_FRAMES", "6"))
         )
         self.ball_missing_frames = 0
         # Paid once the first time each waypoint is passed, so there is something
