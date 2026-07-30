@@ -50,33 +50,31 @@ unset TAG_OCCLUSION_ZONES_FILE
 # would make this moot, but it returns a valid index for only 5.5% of real
 # positions, so this tolerance is carrying the whole lookup.
 #
-# 12 mm is where measured ambiguity turns over. A position is ambiguous when a
-# second corridor more than 150 indices away sits within 3 mm of the nearest
-# one, i.e. detector noise could pick the wrong one. Binned over 246760 real
-# positions:
+# A position is ambiguous when a second corridor more than 150 indices away
+# sits within 3 mm of the nearest one, i.e. detector noise could pick the wrong
+# corridor and the goal vector would point down it. Measured over 246760 real
+# positions, aggregated across everything the tolerance accepts:
 #
-#     0- 9 mm   71.3% of frames    0.0% ambiguous
-#     9-12 mm   21.7% of frames    0.3% ambiguous
-#    12-15 mm    2.1% of frames   14.9% ambiguous
-#    15-20 mm    0.9% of frames   24.8% ambiguous
-#    25-40 mm    2.3% of frames   82.4% ambiguous
+#    <=12 mm   93.3% of frames scored   0.0% of them ambiguous
+#    <=24 mm   97.8% of frames scored   0.8% of them ambiguous
 #
-# So 12 mm buys 21.7% of all frames for 0.3% ambiguity and lands at 93.0%
-# coverage, while every millimetre past it costs a 50x jump in wrong-corridor
-# assignments to gain about 2% of frames.
+# So 24 mm buys the last 4.5% of frames for 0.8% ambiguity overall -- the added
+# 12-24 mm band is 4.4% of frames at 9.5% ambiguity, i.e. 0.42% of all frames
+# misassigned. Worth it: a scored frame with an approximate corridor beats an
+# unscored one, and the anti-cheat's path-per-metre-rolled test independently
+# refuses to pay for a claim the marble did not roll for.
 #
-# The tempting alternative is to drop the limit entirely and match
-# overlay_map_view_simple.py:420, which falls back to an unbounded argmin. Do
-# not: the bands above 12 mm are 7.1% of frames at 15-82% ambiguity, so an
-# unbounded lookup would hand roughly 5.6% of all frames a goal vector pointing
-# down the wrong corridor. A zeroed hint is better than a confidently wrong one.
-# Unbounded is fine for the overlay because nothing is scored from it.
+# Do not go further and drop the limit entirely to match
+# overlay_map_view_simple.py:420, which falls back to an unbounded argmin. The
+# farthest position ever observed is 45.6 mm, and the 24-45 mm range is a marble
+# in a hole or off the board -- real junk, worth excluding. Unbounded is fine
+# for the overlay because nothing is scored from it.
 #
-# The worst-case geometric bound is tighter than this -- |A-B| <= 2T against a
-# 20 mm minimum corridor separation argues for T < 10 mm -- but that is the
-# bound for a marble sitting exactly between two corridors, which the measured
-# distribution says essentially never happens below 12 mm.
-export TAG_PATH_TOLERANCE_M=0.012
+# The worst-case geometric bound is far tighter -- |A-B| <= 2T against a 20 mm
+# minimum corridor separation argues for T < 10 mm -- but that bounds a marble
+# sitting exactly between two corridors, and the measured distribution says that
+# is 0.8% of frames at 24 mm, not the common case.
+export TAG_PATH_TOLERANCE_M=0.024
 
 # Penalty for losing the marble down a hole. Sized against the reward scale: the
 # full path is worth only 9294 pts * 0.004/16 = 2.324, so -0.20 was 8.6% of a
