@@ -117,6 +117,12 @@ def main():
         default="",
         help="x0,x1,y0,y1 in mm, to inspect one region instead of the whole board",
     )
+    ap.add_argument(
+        "--simple", action="store_true",
+        help="one panel, credited against not credited. The three-panel view "
+             "compares the grid to the visibility test, which is only meaningful "
+             "when the grid was built from it.",
+    )
     args = ap.parse_args()
     zoom = [float(v) for v in args.zoom.split(",")] if args.zoom else None
 
@@ -137,6 +143,43 @@ def main():
 
     grid = p.closest_idx
     stored_ok = grid != -1
+
+    if args.simple:
+        ny_, nx_ = grid.shape
+        ext = [0, 1000 * nx_ * p.distance, 0, 1000 * ny_ * p.distance]
+        fig, ax = plt.subplots(figsize=(11, 9.6))
+        ax.imshow(
+            np.where(stored_ok, 1.0, 0.0), extent=ext, origin="lower",
+            cmap=ListedColormap(["#d1382c", "#1f9d55"]), interpolation="nearest",
+            vmin=0, vmax=1,
+        )
+        for x0, x1_, y in np.asarray(layout["walls_h"]):
+            ax.plot([1000 * x0, 1000 * x1_], [1000 * y, 1000 * y], "k", lw=1.3)
+        for y0, y1_, x in np.asarray(layout["walls_v"]):
+            ax.plot([1000 * x, 1000 * x], [1000 * y0, 1000 * y1_], "k", lw=1.3)
+        ax.plot(1000 * p.points[:, 0], 1000 * p.points[:, 1], color="#ffd400", lw=1.0)
+        ax.legend(handles=[
+            Patch(color="#1f9d55", label=f"walkable, scored  {100 * stored_ok.mean():.1f}%"),
+            Patch(color="#d1382c",
+                  label=f"off-path: episode ends  {100 * (~stored_ok).mean():.1f}%"),
+            Patch(color="#ffd400", label="path centreline"),
+            Patch(color="black", label="walls"),
+        ], loc="upper center", bbox_to_anchor=(0.5, -0.06), ncol=2, fontsize=9)
+        ax.set_xlabel("x (mm)")
+        ax.set_ylabel("y (mm)")
+        ax.set_title(os.path.basename(os.path.abspath(args.path)))
+        if zoom:
+            ax.set_xlim(zoom[0], zoom[1])
+            ax.set_ylim(zoom[2], zoom[3])
+        fig.tight_layout()
+        out = os.path.abspath(args.out)
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        fig.savefig(out, dpi=120, bbox_inches="tight")
+        print(f"wrote {out}")
+        print(f"  walkable {100 * stored_ok.mean():.1f}%   "
+              f"off-path {100 * (~stored_ok).mean():.1f}%")
+        return 0
+
     visible = reconstruct_visibility(p, layout)
 
     # Sanity: the stored grid must be a subset of what visibility allows. Any

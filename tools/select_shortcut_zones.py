@@ -130,7 +130,8 @@ def solid_mask(p, layout, wall_mm, hole_margin_mm, holes_mode="allow"):
 
 
 def build(p, layout, zones_mm, base="visibility", wall_mm=3.0,
-          hole_margin_mm=0.0, holes_mode="allow", seal=True):
+          hole_margin_mm=0.0, holes_mode="allow", seal=True,
+          no_seal_below_mm=None):
     """Credit cells, minus the chosen rectangles.
 
     base="all" credits every cell, so the only thing that is ever off-path is
@@ -175,9 +176,18 @@ def build(p, layout, zones_mm, base="visibility", wall_mm=3.0,
         # being paid for the crossing. Blanking can expose new pairs one cell
         # further out, so repeat until none are left; this converges because the
         # credited set only ever shrinks.
+        keep = None
+        if no_seal_below_mm is not None:
+            # Leave the boundary lines credited below this height. Asked for
+            # explicitly; the cost is that hops there stay payable, which the
+            # jump-pair count reports rather than hides.
+            rows = np.arange(ny) * cell * 1000.0
+            keep = (rows < no_seal_below_mm)[:, None] & np.ones((1, nx), bool)
         for _ in range(200):
             hops, n = jump_mask(np.where(credited, near, -1))
-            if not n:
+            if keep is not None:
+                hops &= ~keep
+            if not hops.any():
                 break
             credited &= ~hops
     return np.where(credited, near, -1), credited, allowed
@@ -230,6 +240,11 @@ def main():
     )
     ap.add_argument("--hole_margin_mm", type=float, default=0.0)
     ap.add_argument(
+        "--no_seal_below", type=float, default=None, metavar="MM",
+        help="leave the boundary lines credited below this y in mm; hops there "
+             "stay payable and are still counted",
+    )
+    ap.add_argument(
         "--no_seal", action="store_true",
         help="leave the corridor-to-corridor boundary lines credited. They are "
              "blanked by default, so crossing one is off-path.",
@@ -256,7 +271,7 @@ def main():
 
     def write(zones_now):
         grid, _, allowed = build(p, layout, zones_now, args.base, args.wall_mm, args.hole_margin_mm, args.holes,
-                                     not args.no_seal)
+                                     not args.no_seal, args.no_seal_below)
         n = report(p, grid, allowed, marble)
         with open(args.zones, "w") as fh:
             json.dump({"zones_mm": zones_now}, fh, indent=2)
@@ -285,7 +300,7 @@ def main():
 
     def recompute(zones_now):
         grid, credited, allowed = build(p, layout, zones_now, args.base, args.wall_mm, args.hole_margin_mm, args.holes,
-                                     not args.no_seal)
+                                     not args.no_seal, args.no_seal_below)
         hops, n = jump_mask(grid)
         return credited, allowed, hops, n
 
