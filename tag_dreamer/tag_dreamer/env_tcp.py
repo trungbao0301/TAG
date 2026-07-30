@@ -189,6 +189,41 @@ class TagGym(gym.Env):
             0.0,
             float(os.environ.get("TAG_ANTICHEAT_MIN_STEP_M", "0.010")),
         )
+        # How much path a marble may claim per metre it physically travelled.
+        # A speed budget cannot separate a shortcut from a fast marble, because
+        # both advance a lot of path in one step. This can: an exhaustive scan
+        # of all 9294 path points found no two points closer than 20 mm that
+        # are more than 150 indices apart, but at 25 mm there are 223495 such
+        # pairs -- e.g. index 0 and index 4055 sit 24.9 mm apart while being
+        # 811 mm apart along the path. So a 25 mm sideways hop can claim 44% of
+        # the maze. Measured on 13785 real credited steps, honest motion sits at
+        # ratio 0.98 (p50) / 1.10 (p90), because path advance simply tracks
+        # distance rolled; the shortcut geometry predicts ~32. 3.0 leaves honest
+        # motion a 3x margin and still rejects every hop the scan found.
+        self.anti_cheat_travel_ratio = max(
+            0.0,
+            float(os.environ.get("TAG_ANTICHEAT_TRAVEL_RATIO", "3.0")),
+        )
+        # Physical distance rolled since the last step that earned credit, and
+        # the position it was measured from. Both accumulate across steps that
+        # earned nothing -- denied jumps and steps spent off the path grid --
+        # so travel done while unscored still justifies the eventual advance.
+        # Without this the reference freezes: measured 766 stretches where
+        # prev_pos_path held still while the marble rolled a median 77 mm, and
+        # the log showed from=3.1% pinned while to= crept 8.7 -> 10.1%, i.e.
+        # every later step in that episode was denied too.
+        self.travel_since_credit = 0.0
+        self.last_step_pos = None
+        self.last_step_implausible = False
+        # A detector flip reverts within a frame or two; a real hop does not.
+        # After this many consecutive denials the new position is adopted as the
+        # scoring reference, still without credit, so one bad jump cannot mute
+        # the rest of the episode. Above anti_cheat_confirm_steps so that when
+        # termination is enabled it still gets to fire first.
+        self.anti_cheat_resync_steps = max(
+            0,
+            int(os.environ.get("TAG_ANTICHEAT_RESYNC_STEPS", "8")),
+        )
         # Set when the marble is reacquired after an occlusion gap. The marble
         # kept rolling while it was hidden, but prev_pos_path is from before the
         # gap, so the whole gap's travel would be charged to one step.
@@ -326,9 +361,11 @@ class TagGym(gym.Env):
             f"cheat={self.cheat}, "
             f"anticheat_termination="
             f"{'ON' if self.anti_cheat_enabled else 'OFF'}, "
-            f"max_single_step={self.anti_cheat_max_step_m:.3f}m, "
+            f"min_step={self.anti_cheat_min_step_m:.3f}m, "
+            f"travel_ratio={self.anti_cheat_travel_ratio:.1f}x, "
             f"max_speed={self.anti_cheat_max_speed_mps:.2f}m/s, "
             f"confirm_steps={self.anti_cheat_confirm_steps}, "
+            f"resync_steps={self.anti_cheat_resync_steps}, "
             f"penalty={self.anti_cheat_penalty:.3f}"
         )
 
@@ -405,6 +442,9 @@ class TagGym(gym.Env):
         self.anti_cheat_triggered = False
         self.implausible_jump_steps = 0
         self.resync_progress_after_gap = False
+        self.travel_since_credit = 0.0
+        self.last_step_pos = None
+        self.last_step_implausible = False
         self.ball_detected = False
         self.ball_occluded = False
         self.ball_missing_since = None
@@ -631,6 +671,11 @@ class TagGym(gym.Env):
         return self._obs_from_reply(rep)
 
     def _get_reward(self, obs):
+        # Accumulate physical travel first, on every branch. A step that earns
+        # nothing still moved the marble, and that distance is what later
+        # justifies the path it claims.
+        self._accumulate_travel(obs["states"][2:4])
+
         if self.ball_occluded or not self.ball_detected:
             self.stuck_anchor_pos = None
             self.stuck_since = None
@@ -647,30 +692,33 @@ class TagGym(gym.Env):
                 self.implausible_jump_steps = 0
                 self.prev_pos_path = curr_pos_path
                 self.progress = 0
+                # The gap's travel was predicted, not measured, so it must not
+                # bankroll the next claim.
+                self.travel_since_credit = 0.0
                 return self._stuck_reward(obs["states"][2:4])
 
             raw_step_progress = curr_pos_path - self.prev_pos_path
-            # Scale the budget by the real step time (never below the fixed one).
-            # last_time is 0 until the first reset and can be stale across one,
-            # so ignore implausible dt and fall back to the fixed budget.
-            step_dt = time.time() - self.last_time
-            if not (0.0 < step_dt <= 1.0):
-                step_dt = 0.0
-            if step_dt > 0.0 and self.anti_cheat_max_speed_mps > 0.0:
-                # Never looser than the old fixed budget, never tighter than the
-                # floor. On slow frames this relaxes; on normal frames it is
-                # tighter than 0.057 m, which is what actually catches a flip.
-                allowed_m = min(
-                    self.anti_cheat_max_step_m,
-                    max(
-                        self.anti_cheat_min_step_m,
-                        self.anti_cheat_max_speed_mps * step_dt,
-                    ),
-                )
-            else:
-                allowed_m = self.anti_cheat_max_step_m
+            # A claimed advance can be wrong in two unrelated ways, so it takes
+            # two tests. Neither one subsumes the other:
+            #
+            #   shortcut  -- the marble really is where it is reported, it just
+            #                hopped 25 mm into a corridor 811 mm further along.
+            #                Physical speed is ordinary, so a speed budget sees
+            #                nothing; the giveaway is path claimed per metre
+            #                rolled.
+            #   flip      -- the detector reported the marble somewhere it never
+            #                was. The claimed roll is itself impossible, so the
+            #                ratio looks honest (~1) while the speed does not.
+            allowed_m = max(
+                self.anti_cheat_min_step_m,
+                self.anti_cheat_travel_ratio * self.travel_since_credit,
+            )
             allowed_points = max(1, int(allowed_m / self.p.distance))
-            single_step_triggered = raw_step_progress > allowed_points
+            shortcut_triggered = raw_step_progress > allowed_points
+            single_step_triggered = shortcut_triggered or self.last_step_implausible
+            trigger_reason = (
+                "path_per_metre_rolled" if shortcut_triggered else "impossible_roll"
+            )
 
             if (not self.cheat) and single_step_triggered:
                 self.implausible_jump_steps += 1
@@ -695,25 +743,82 @@ class TagGym(gym.Env):
                     )
                 print(
                     "[AntiCheat]: IMPLAUSIBLE PROGRESS JUMP "
-                    "reason=single_step_distance "
+                    f"reason={trigger_reason} "
                     f"from={100.0 * self.prev_pos_path / max(1, self.p.num_points - 1):.1f}% "
                     f"to={100.0 * curr_pos_path / max(1, self.p.num_points - 1):.1f}% "
-                    f"single_step={raw_step_progress * self.p.distance:.3f}m "
-                    f"threshold={allowed_m:.3f}m (step_dt={step_dt * 1000.0:.1f}ms); "
-                    + verdict
+                    f"claimed={raw_step_progress * self.p.distance:.3f}m "
+                    f"rolled={self.travel_since_credit:.3f}m "
+                    f"threshold={allowed_m:.3f}m; " + verdict
                 )
                 if confirmed:
                     self.anti_cheat_triggered = True
-                # Leave prev_pos_path alone so a one-frame detector flip that
-                # reverts next step resumes scoring from the real position.
+                # A detector flip reverts within a frame or two, so holding the
+                # reference lets scoring resume from the real position. A real
+                # hop does not revert, and holding forever then kills the rest
+                # of the episode's reward signal -- measured as from= pinned at
+                # 3.1% while to= crept to 10.1%, every later step denied. So
+                # once the new position has persisted, adopt it as the
+                # reference. No credit is given for the skipped path, which is
+                # what stops this from being a way to farm reward.
+                if (
+                    self.anti_cheat_resync_steps > 0
+                    and self.implausible_jump_steps >= self.anti_cheat_resync_steps
+                ):
+                    print(
+                        "[AntiCheat]: jump persisted "
+                        f"{self.implausible_jump_steps} steps; adopting "
+                        f"{100.0 * curr_pos_path / max(1, self.p.num_points - 1):.1f}% "
+                        "as the new reference without credit"
+                    )
+                    self.prev_pos_path = curr_pos_path
+                    self.implausible_jump_steps = 0
+                    self.travel_since_credit = 0.0
                 return 0.0
 
             self.implausible_jump_steps = 0
             self.progress = curr_pos_path - self.prev_pos_path
             reward = float(curr_pos_path - self.prev_pos_path) * 0.004 / 16.0
             self.prev_pos_path = curr_pos_path
+            # This advance has been paid for; the next one needs fresh travel.
+            self.travel_since_credit = 0.0
             reward += self._stuck_reward(obs["states"][2:4])
         return reward
+
+    def _accumulate_travel(self, ball_pos):
+        """Bank the distance this step rolled, and flag an impossible roll.
+
+        Called on every step, including ones that earn nothing, because travel
+        done while unscored is what justifies the advance eventually claimed.
+        """
+        position = np.asarray(ball_pos, dtype=np.float32)
+        if not np.all(np.isfinite(position)):
+            self.last_step_implausible = False
+            return
+        if self.last_step_pos is None:
+            self.last_step_pos = position.copy()
+            self.last_step_implausible = False
+            return
+
+        moved = float(np.linalg.norm(position - self.last_step_pos))
+        self.last_step_pos = position.copy()
+
+        step_dt = time.time() - self.last_time
+        if not (0.0 < step_dt <= 1.0):
+            step_dt = 0.0
+        if self.anti_cheat_max_speed_mps > 0.0 and step_dt > 0.0:
+            cap = max(
+                self.anti_cheat_min_step_m,
+                self.anti_cheat_max_speed_mps * step_dt,
+            )
+            self.last_step_implausible = moved > cap
+            # Bank only what the marble could actually have rolled, so a
+            # detector flip cannot buy itself a larger allowance to spend on
+            # the next claim.
+            moved = min(moved, cap)
+        else:
+            self.last_step_implausible = False
+
+        self.travel_since_credit += moved
 
     def _stuck_reward(self, ball_pos):
         """Apply one penalty per stationary window without ending the episode."""
