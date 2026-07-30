@@ -21,7 +21,20 @@ export AMENT_PREFIX_PATH="$PROJECT_ROOT/install/tag_dreamer"
 # unknown config (it only has a "cyberrunner:" profile).
 export PYTHONPATH="$PROJECT_ROOT/dreamerv3:$PROJECT_ROOT/install/tag_dreamer/lib/python3.11/site-packages${PYTHONPATH:+:$PYTHONPATH}"
 
-export TAG_BALL_LOSS_GRACE_SEC=0
+# One frame without a detected marble used to end the episode and charge
+# reward_on_fail: measured 166 losses over 100 episodes, every one reported
+# grace=0.00s. At the measured 25 Hz control rate a frame is 40 ms, so 0.10 s
+# absorbs a two-frame detector dropout and nothing longer -- a marble actually
+# down a hole stays undetected far past that and still terminates.
+#
+# The cost is real and is why this is 0.10 and not the 0.35 the README quotes:
+# inside the grace window env_tcp feeds last_valid_ball_pos + velocity * dt
+# instead of a measurement, so the window's frames are extrapolated, not
+# observed. 0.10 s caps that at ~3 frames per episode end.
+export TAG_BALL_LOSS_GRACE_SEC=0.10
+# Left at 0 on purpose: the longer occlusion grace only applies inside the
+# zones configured below, and both zone lists are empty, so all 166 losses
+# were classified source=outside_zone and never consulted this value.
 export TAG_OCCLUSION_GRACE_SEC=0
 export TAG_OCCLUSION_XY_ZONES=""
 export TAG_OCCLUSION_CHECKPOINT_RANGES=""
