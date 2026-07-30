@@ -21,16 +21,10 @@ export AMENT_PREFIX_PATH="$PROJECT_ROOT/install/tag_dreamer"
 # unknown config (it only has a "cyberrunner:" profile).
 export PYTHONPATH="$PROJECT_ROOT/dreamerv3:$PROJECT_ROOT/install/tag_dreamer/lib/python3.11/site-packages${PYTHONPATH:+:$PYTHONPATH}"
 
-# One frame without a detected marble used to end the episode and charge
-# reward_on_fail: measured 166 losses over 100 episodes, every one reported
-# grace=0.00s. At the measured 25 Hz control rate a frame is 40 ms, so 0.10 s
-# absorbs a two-frame detector dropout and nothing longer -- a marble actually
-# down a hole stays undetected far past that and still terminates.
+# How long a marble may go undetected before the episode is failed. This started
+# at 0, where a single missed frame ended the episode -- 166 losses over 100
+# episodes, every one reporting grace=0.00s.
 #
-# The cost is real and is why this is 0.10 and not the 0.35 the README quotes:
-# inside the grace window env_tcp feeds last_valid_ball_pos + velocity * dt
-# instead of a measurement, so the window's frames are extrapolated, not
-# observed. 0.10 s caps that at ~3 frames per episode end.
 # 0.20 s, raised from 0.10 s. 0.10 s was sized against a 25 Hz loop, i.e. 2-3
 # frames, but the loop actually runs at p10 19.3 / p50 25.3 fps, so a frame is
 # 31-52 ms and 0.10 s buys only two of them. Every measured loss confirmed at
@@ -120,8 +114,8 @@ export TAG_ANTICHEAT_TRAVEL_RATIO=0
 # Off-path termination, which is the original env's entire anti-shortcut rule:
 # a cell the grid will not credit ends the episode. A hop between corridors has
 # to cross those cells, so it cannot be taken at all rather than having to be
-# detected. 2 frames rather than the original's 1 because this detector loses
-# the marble often enough that a single frame should not end an episode.
+# detected.
+#
 # 1 frame: touching a blanked cell ends the episode, which is what the original
 # env did and what makes the trap have teeth. At anything higher the marble can
 # cross a blanked ridge and come out the other side unpunished -- at 10 it had
