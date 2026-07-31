@@ -62,11 +62,23 @@ export TAG_BALL_LOSS_GRACE_FRAMES=0
 # per-millimetre progress term. The progress term is smooth but gives nothing
 # extra for clearing the specific spots the marble keeps failing at, and the
 # measured distribution says it fails at a few specific spots rather than
-# uniformly. 0.02 each is 1.22 over a full run against 2.324 of progress reward,
-# and about a third of what an episode currently earns, so it is worth aiming at.
+# uniformly.
+#
+# 0.0100 each across 122 waypoints, which is the same 1.22 total as the 0.02 x 61
+# it replaces -- the waypoints were subdivided to cap any segment at 20 mm, and
+# the per-waypoint value scaled down to hold the total. Splitting them evens out
+# when the bonus arrives without making it a larger share of the reward: segments
+# ran from 9.6 to 120.7 mm, so the marble crossed one 120 mm stretch earning
+# nothing extra while elsewhere a bonus landed every 10 mm.
+#
+# Raising the density further does not add forward pressure. The progress term
+# already pays 0.00025 for every 0.2 mm rolled, 50x finer than a 20 mm waypoint,
+# so there is no gradient missing -- and holding 0.02 per waypoint at this count
+# would take the bonus to 2.44 against 2.324 of progress and make it the dominant
+# term.
 # Gated on the best checkpoint reached in the episode, so rolling back and forth
 # across a boundary pays nothing.
-export TAG_CHECKPOINT_BONUS=0.02
+export TAG_CHECKPOINT_BONUS=0.0100
 # Left at 0 on purpose: the longer occlusion grace only applies inside the
 # zones configured below, and both zone lists are empty, so all 166 losses
 # were classified source=default_grace and never consulted this value.
