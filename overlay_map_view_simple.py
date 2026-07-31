@@ -78,13 +78,14 @@ OFFSET = np.array([BOARD_W, BOARD_H], dtype=np.float32) / 2.0
 # OFFSET above assumes the two coincide. Drawing the dot quad makes that
 # assumption checkable: it should sit concentrically outside the playable
 # rectangle by (269-259)/2 = 5 mm in x and (237-229)/2 = 4 mm in y.
-# tools/fit_marker_geometry.py, NOT the ETH original's 0.269 x 0.237. Those were
-# inherited nominal values for different hardware; this board runs a custom maze.
-# Profiling the dot-plane height h against the known DXF hole positions gives a
-# clear minimum at h = 10 mm (median residual 2.13 mm at h=0, 1.49 mm at h=10,
-# 1.92 mm at h=20), independently reproducing a 1 cm ruler measurement, and at
-# that optimum the spacing is 249.2 x 222.3 mm. Median hole residual over the
-# whole set improves 5.67 -> 1.49 mm versus the old constants.
+# 0.269 x 0.237, the measured dot spacing, matching
+# ai_map_state.MOVING_MARKER_SPACING_X_M/Y_M.
+#
+# A previous version of this comment argued for a fitted 249.2 x 222.3 mm while
+# the code below set 0.269 x 0.237, so it contradicted the line it documented.
+# That fit is discredited: the dots sit on the rim OUTSIDE the 259 x 229 mm maze,
+# so a spacing smaller than the maze is not physically possible. See the warning
+# in ai_map_state.py against re-deriving these from hole positions.
 C2C_X = 0.269
 C2C_Y = 0.237
 
@@ -383,14 +384,29 @@ def make_base_map():
         print("Could not load saved path, drawing waypoints only:", e)
         path = None
 
+    # Draw the waypoints the training env actually scores against, which live in
+    # the path pickle, not the ones in the layout module. The two were the same
+    # list until the path was subdivided to cap checkpoint spacing at 20 mm, and
+    # then they were not: waypoint_path_indices came from the 123-waypoint path
+    # while this array still held the layout's 62, so find_next_waypoint returned
+    # an index the array could not take and the overlay died on startup with
+    # "index 89 is out of bounds for axis 0 with size 62". Reading both from one
+    # source is what stops that recurring.
+    if path is not None:
+        waypoints = np.asarray(path.orig_waypoints, dtype=np.float32)
+
     # Precompute waypoint pixel locations.
     waypoint_px = np.array([world_to_px(float(x), float(y)) for x, y in waypoints], dtype=np.int32)
 
-    # Match the checkpoint indices used by the Thomas training environments.
+    # Match the checkpoint indices used by the training environment.
     if path is not None:
         waypoint_path_indices = make_waypoint_path_indices(path)
     else:
         waypoint_path_indices = np.full(len(waypoints), -1, dtype=np.int32)
+    assert len(waypoint_path_indices) == len(waypoints), (
+        "waypoint markers and their path indices must come from the same list",
+        len(waypoints), len(waypoint_path_indices),
+    )
 
     # Static labels only for START and END. No repeated W/PASS/NEXT clutter.
     if len(waypoint_px) > 0:

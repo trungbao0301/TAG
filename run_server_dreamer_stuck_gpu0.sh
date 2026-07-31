@@ -201,13 +201,18 @@ export TAG_ANTICHEAT_TRAVEL_RATIO=0
 # measurement. If OFFPATH starts firing on single glitch frames, raise to 3 or 4
 # rather than back to 10.
 export TAG_OFFPATH_CONFIRM_STEPS=1
-# -0.15, three times the -0.05 a hole costs. This is the shortcut penalty now:
-# the traps are the painted zones and the sealed corridor boundaries, and running
-# into one is what ends the episode. Both endings are terminal, so entering a trap
-# has to be dearer than dropping down a hole or there is no reason to prefer
-# driving the maze. Matches TAG_ANTICHEAT_PENALTY so the two shortcut routes cost
-# the same.
-export TAG_OFFPATH_PENALTY=-0.15
+# -0.10, softened from -0.15. This is the shortcut penalty: the traps are the
+# painted zones and the sealed corridor boundaries, and crossing one ends the
+# episode.
+#
+# It stays above the -0.05 a hole costs, and that ordering is the part not to
+# lose. Both endings are terminal, so if a trap were the cheaper exit the policy
+# would have no reason to prefer driving the maze over cutting across it. -0.10
+# keeps it twice the price of a hole while taking the sting out: against the
+# +0.03 to +0.07 an episode earns, -0.15 was two to five episodes of progress for
+# one crossing, and crossings are now caught far more often since the check looks
+# at the whole step rather than where it landed.
+export TAG_OFFPATH_PENALTY=-0.10
 
 export TAG_STUCK_WINDOW_SEC=5
 export TAG_STUCK_RADIUS_M=0.003
