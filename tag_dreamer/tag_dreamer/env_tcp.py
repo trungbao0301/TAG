@@ -77,7 +77,7 @@ class TagGym(gym.Env):
         num_rel_path=5,
         num_wait_steps=30,
         reward_on_fail=-0.20,
-        reward_on_goal=0.5,
+        reward_on_goal=2.0,
     ):
         super().__init__()
 
