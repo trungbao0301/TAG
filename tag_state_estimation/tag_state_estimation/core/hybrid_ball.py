@@ -155,13 +155,33 @@ class HybridBallTracker:
                     return confirmed if confirmed is not None else self._missing()
                 return self._accept(fused, "fused", disagreement)
 
-            # AI is authoritative when the detectors disagree. A nearby AI
-            # candidate may continue tracking immediately; a distant one must
-            # pass the same multi-frame confirmation as any AI reacquisition.
+            # AI stays authoritative when the detectors disagree, but only while
+            # its candidate is somewhere the marble could actually have reached.
+            #
+            # Measured on the live board, the learned detector reports a black
+            # HOLE as the marble on about 3% of the frames it fires, at
+            # confidences around 0.87. When it does, it is typically most of the
+            # board away from the track -- one observed case put it 131 mm from
+            # where colour had the marble, on the hole in the bottom-right
+            # corner. Deferring to that cost the frame twice over: the hole
+            # position failed the jump test, so nothing was published, and the
+            # perfectly good colour candidate sitting on the track was discarded
+            # with it.
+            #
+            # Colour cannot make that particular mistake: a hole is black and the
+            # filter only passes blue. So when the AI has left the track and
+            # colour has not, colour carries the frame.
             if self.last_position is not None:
-                ai_jump = self._distance(ai_position, self.last_position)
-                if ai_jump <= self.max_reacquire_jump_px:
+                budget = self._travel_budget(self.missing_frames + 1)
+                if self._distance(ai_position, self.last_position) <= budget:
                     return self._accept(ai_position, "ai_disagreement", disagreement)
+                if (
+                    self.trust_hsv_alone
+                    and self._distance(hsv_position, self.last_position) <= budget
+                ):
+                    return self._accept(
+                        hsv_position, "hsv_disagreement", disagreement
+                    )
             confirmed = self._confirm_reacquisition(
                 ai_position, "ai_reacquired_confirmed"
             )

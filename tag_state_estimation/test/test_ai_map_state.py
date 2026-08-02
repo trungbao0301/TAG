@@ -76,6 +76,20 @@ def test_kinematics_reports_velocity_and_rejects_impossible_jump():
     assert np.all(np.isnan(velocity))
 
 
+def test_a_zero_speed_limit_turns_the_gate_off():
+    """The rig runs with the gate off; HybridBallTracker bounds speed instead.
+
+    It fired on 18 of 6000 live frames, every one of them a marble both
+    detectors had located, rejected only for running faster than 2 m/s.
+    """
+    tracker = AlphaBetaKinematics(alpha=1.0, beta=1.0, max_speed_mps=0.0)
+    tracker.update([0.0, 0.0], 1.0)
+    position, velocity, status = tracker.update([1.0, 0.0], 1.1)
+    assert status == "valid"
+    assert np.all(np.isfinite(position))
+    assert np.all(np.isfinite(velocity))
+
+
 def test_fixed_guard_holds_position_when_one_marker_is_covered():
     corners = _synthetic_corners_rc()
     guard = MarkerQuadGuard(corners, mode="fixed", smoothing=1.0)

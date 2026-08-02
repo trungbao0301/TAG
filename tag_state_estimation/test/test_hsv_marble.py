@@ -125,3 +125,66 @@ def test_a_speck_is_rejected_by_the_area_floor():
     moving_rc, _ = dot_quad()
     frame = blue_frame([board_to_px(0.0, 0.0)], 1)
     assert H.detect_marble(frame, moving_rc) is None
+
+
+def test_a_local_disc_recovers_a_marble_the_area_floor_would_have_dropped():
+    """The wall case: a partly occluded marble is still the marble.
+
+    Against a wall only part of the marble's colour survives, and the full-maze
+    floor of 25 px2 then rejects it even though nothing else in the maze passes
+    the blue filter at all. Confined to a disc around the last sighting, the
+    floor can come down and the frame is kept.
+    """
+    moving_rc, _ = dot_quad()
+    target = board_to_px(0.02, -0.03)
+    # Only a sliver of the marble's colour survives, as against a wall, where
+    # the rest is occluded or in the wall's shadow.
+    clipped = blue_frame([target], 2)
+
+    assert H.detect_marble(clipped, moving_rc) is None
+
+    found = H.detect_marble(
+        clipped,
+        moving_rc,
+        area_px2=H.DEFAULT_LOCAL_AREA_PX2,
+        search_center_px=target,
+        search_radius_px=32.0,
+    )
+    assert found is not None
+    assert np.linalg.norm(found - target) < 12.0
+
+
+def test_the_local_disc_still_refuses_a_dot_on_the_rim():
+    """Relaxing the floor must not relax the geometry that rejects markers."""
+    moving_rc, image_xy = dot_quad()
+    frame = blue_frame(image_xy, 6)
+    for dot in image_xy:
+        assert H.detect_marble(
+            frame,
+            moving_rc,
+            area_px2=H.DEFAULT_LOCAL_AREA_PX2,
+            search_center_px=dot,
+            search_radius_px=32.0,
+        ) is None
+
+
+def test_the_local_disc_ignores_a_marble_outside_it():
+    moving_rc, _ = dot_quad()
+    far = board_to_px(0.09, 0.08)
+    frame = blue_frame([far], 6)
+    assert H.detect_marble(
+        frame,
+        moving_rc,
+        search_center_px=board_to_px(-0.09, -0.08),
+        search_radius_px=32.0,
+    ) is None
+    assert H.detect_marble(frame, moving_rc) is not None
+
+
+def test_a_degenerate_local_disc_is_refused_rather_than_guessed():
+    moving_rc, _ = dot_quad()
+    frame = blue_frame([board_to_px(0.0, 0.0)], 6)
+    assert H.detect_marble(frame, moving_rc, search_center_px=(np.nan, 1.0),
+                           search_radius_px=32.0) is None
+    assert H.detect_marble(frame, moving_rc, search_center_px=(10.0, 10.0),
+                           search_radius_px=0.0) is None

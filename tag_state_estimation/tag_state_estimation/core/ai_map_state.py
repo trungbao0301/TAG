@@ -502,9 +502,13 @@ class AlphaBetaKinematics:
 
         predicted = self.position + self.velocity * dt
         residual = measurement - predicted
-        implied_speed = float(np.linalg.norm(measurement - self.position) / dt)
-        if implied_speed > self.max_speed_mps:
-            return np.full(2, np.nan), np.full(2, np.nan), "speed_gate"
+        # max_speed_mps <= 0 (or non-finite) disables the gate.
+        if self.max_speed_mps > 0.0 and np.isfinite(self.max_speed_mps):
+            implied_speed = float(
+                np.linalg.norm(measurement - self.position) / dt
+            )
+            if implied_speed > self.max_speed_mps:
+                return np.full(2, np.nan), np.full(2, np.nan), "speed_gate"
 
         self.position = predicted + self.alpha * residual
         self.velocity = self.velocity + (self.beta / dt) * residual

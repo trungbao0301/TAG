@@ -36,6 +36,18 @@ DEFAULT_INSET_M = 0.002
 # specular glints and sensor noise.
 DEFAULT_AREA_PX2 = (25.0, 2000.0)
 
+# Floor used when the search is already confined to a disc around the marble's
+# last known position. Measured over 120 frames of the live board, NOTHING other
+# than the marble passes the blue filter anywhere inside the maze -- the walls
+# are yellow and the holes are black -- so within such a disc the size gate is
+# not protecting against anything and only costs margin. That margin is thin:
+# the marble's own blob runs 47-104 px2 against a floor of 25, because the
+# specular cap (V > 243) and the shaded rim both fall outside the colour band,
+# so barely half the marble's 120 px2 outline survives. Against a wall, where
+# part of the marble is occluded or in shadow, what is left drops under 25 and
+# colour loses a marble it can plainly still see.
+DEFAULT_LOCAL_AREA_PX2 = (10.0, 2000.0)
+
 
 def maze_polygon_px(moving_rc, inset_m=DEFAULT_INSET_M):
     """The maze rectangle in image pixels, from the four moving dots.
@@ -78,12 +90,19 @@ def detect_marble(
     hsv_hi=DEFAULT_HSV_HI,
     inset_m=DEFAULT_INSET_M,
     area_px2=DEFAULT_AREA_PX2,
+    search_center_px=None,
+    search_radius_px=None,
 ):
     """Marble centre as [x, y] pixels from colour alone, or None.
 
     Returns None rather than a guess whenever the quad is unusable or nothing
     inside the maze matches, so the caller can treat it as "HSV had nothing" and
     fall back on the learned detector.
+
+    search_center_px / search_radius_px narrow the search to a disc around where
+    the marble was last seen. That is what makes a lower area_px2 floor safe: the
+    disc, not the size of the blob, becomes the thing rejecting impostors. Pass
+    a radius that covers a frame of travel plus the marble's own radius.
     """
     if frame is None or frame.ndim != 3:
         return None
@@ -94,6 +113,15 @@ def detect_marble(
     height, width = frame.shape[:2]
     mask_area = np.zeros((height, width), np.uint8)
     cv2.fillConvexPoly(mask_area, polygon.astype(np.int32), 255)
+    if search_center_px is not None and search_radius_px is not None:
+        center = np.asarray(search_center_px, dtype=np.float64).reshape(-1)
+        radius = float(search_radius_px)
+        if center.shape != (2,) or not np.all(np.isfinite(center)) or radius <= 0.0:
+            return None
+        disc = np.zeros((height, width), np.uint8)
+        cv2.circle(disc, (int(round(center[0])), int(round(center[1]))),
+                   int(round(radius)), 255, -1)
+        mask_area = cv2.bitwise_and(mask_area, disc)
 
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     colour = cv2.inRange(hsv, np.asarray(hsv_lo, np.uint8), np.asarray(hsv_hi, np.uint8))

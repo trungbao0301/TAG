@@ -161,6 +161,22 @@ class AiMapEstimatorNode(Node):
         # anything longer or further still serves the full confirmation window.
         # 0 restores the old behaviour of confirming after every single miss.
         self.declare_parameter("fast_reacquire_frames", 3)
+        # Radius of the disc the colour search is confined to when the marble was
+        # seen recently, for the first frame after that sighting; it grows by the
+        # same amount per frame the marble stays unseen, since the marble keeps
+        # rolling. 32 px is one frame of travel at max_reacquire_jump_px plus the
+        # marble's own 6 px radius.
+        #
+        # The point is not speed, it is being able to lower the area floor. Across
+        # 120 live frames nothing but the marble passed the blue filter anywhere
+        # in the maze, and nothing at all appeared within 56 px of it, so inside
+        # this disc the size gate rejects nothing real and only costs margin --
+        # margin the marble needs when a wall occludes or shades half of it.
+        # 0 disables the local pass and searches the whole maze every frame.
+        self.declare_parameter("hsv_search_radius_px", 32.0)
+        # Frames the local disc may keep growing before the search gives up on the
+        # last sighting and goes back to the whole maze at the strict floor.
+        self.declare_parameter("hsv_search_max_age_frames", 3)
         # Disc erased from every corner search window around the marble's previous
         # position. 10 px is about 5 mm here, so it covers a frame of travel with
         # margin while staying well inside the 10 mm that separates a dot centre
@@ -192,11 +208,92 @@ class AiMapEstimatorNode(Node):
         # up as an episode running to TAG_TIMEOUT_STEPS instead of ending early,
         # which is visible in the log rather than silent.
         self.declare_parameter("hole_rejection_enabled", False)
+        # A narrow descendant of the gate above, and the reason that one can stay
+        # off. It drops an AI candidate ONLY when all of these hold at once:
+        # colour also has a candidate, the two disagree by more than
+        # hole_tiebreak_disagreement_px, the AI is sitting on a hole, and colour
+        # is not. Measured live, the detector calls a black hole the marble on
+        # about 3% of the frames it fires, at confidences near 0.87.
+        #
+        # What made the old blanket gate harmful was dropping the marble as it
+        # merely rolled over a hole -- 47.7% of hole entries lasted 1-3 frames.
+        # This cannot do that: a marble on a hole is a marble colour ALSO sees on
+        # that hole, the two agree, and nothing is dropped. It only fires when
+        # the two sources point at different places and one of them is a hole,
+        # which colour cannot mistake, since a hole is black and the filter only
+        # passes blue.
+        #
+        # The bound matters more than it looks. Hole #11 sits 22.7 mm from
+        # waypoint 100, which is 23 px -- inside max_reacquire_jump_px -- so the
+        # tracker's own distance test cannot catch that one and hands over a
+        # position 23 mm off, in the middle of the run the marble is trying to
+        # complete.
+        self.declare_parameter("hole_tiebreak_enabled", True)
+        self.declare_parameter("hole_tiebreak_disagreement_px", 12.0)
+        # Who settles it when the two detectors point at different places.
+        # always | open | off.
+        #
+        # always: colour wins, wherever the marble is. That is the setting here,
+        # because colour has no failure mode for this scene and the learned
+        # detector has a well measured one -- it reports a black hole as the
+        # marble on about 3% of the frames it fires, at confidences near 0.87,
+        # sometimes most of the board away. Colour cannot make that mistake: the
+        # filter passes blue and a hole is black.
+        #
+        # This costs less than it looks. It does NOT sideline the AI: a
+        # disagreement needs both sources to have a candidate, so the frames the
+        # AI carries alone -- about 1% of them, where colour has nothing -- are
+        # untouched, and when the two agree within agreement_radius_px the
+        # published point is still the 50/50 blend.
+        #
+        # The one real cost is at the rim, where the maze mask clips part of the
+        # marble: 16% of the blob against the right wall. Rasterised against the
+        # real homography that biases colour's centroid by 0.6 mm at a wall and
+        # 0.9 mm in a corner, against a median AI-to-colour gap of 2.3 mm. Small
+        # enough to prefer over handing those frames to a source that can put the
+        # marble on a hole.
+        #
+        # coverage: colour settles it as long as the maze mask has not eaten too
+        # much of the marble -- the condition that actually matters, rather than
+        # distance from the rim standing in for it. Measured on the real
+        # homography, the mask keeps 100% of the marble in the middle of the
+        # board, 92% against the top wall and 84% against the right wall and in
+        # the corners; the resulting centroid bias is 0.6 mm at a wall and 0.9 mm
+        # in a corner. So with the threshold at 0.70 this board never actually
+        # hands a disagreement to the AI -- which is the intent -- but the rule
+        # still does the right thing if the inset, the lens or the board change.
+        #
+        # open: colour only settles it while at least hsv_priority_margin_m
+        # inside the maze edge.
+        self.declare_parameter("hsv_priority_mode", "coverage")
+        self.declare_parameter("hsv_min_coverage", 0.70)
+        self.declare_parameter("hsv_priority_margin_m", 0.010)
+        self.declare_parameter("hsv_priority_disagreement_px", 12.0)
         self.declare_parameter("hole_rejection_margin_m", 0.0025)
         self.declare_parameter("hole_rejection_delay_sec", 0.0)
         self.declare_parameter("velocity_alpha", 0.65)
         self.declare_parameter("velocity_beta", 0.12)
-        self.declare_parameter("max_marble_speed_mps", 2.0)
+        # Off (0 disables it). It fired on 18 of 6000 measured frames, and every
+        # one of those was a real marble the detectors had located -- it rejected
+        # them purely for arriving faster than 2 m/s, which on a steep run they
+        # legitimately do. The estimate then went invalid on a frame where the
+        # marble was in plain sight.
+        #
+        # The failure it guarded against, a wildly displaced detection entering
+        # the filter, is already covered upstream and more cheaply:
+        # HybridBallTracker will not accept any candidate further from the last
+        # position than max_reacquire_jump_px, which is the same bound expressed
+        # in pixels per frame. Two gates for one job, and this was the one that
+        # could only report loss after the fact.
+        self.declare_parameter("max_marble_speed_mps", 0.0)
+        # The remaining speed bound, and now the only one. Derived rather than
+        # guessed: the moving dots span 277 px for 269 mm, so 1.03 px/mm, and the
+        # camera runs ~45 fps, which puts 2 m/s at 46 px per frame. The old 25 px
+        # was 1.05 m/s -- BELOW the 2 m/s the node itself claimed to support, so
+        # a marble running faster than that with only one detector on it was
+        # dropped every single frame, and _confirm_reacquisition could not
+        # recover it either since it tests against the same bound.
+        self.declare_parameter("max_reacquire_jump_px", 48.0)
         self.declare_parameter("marker_occlusion_grace_sec", 0.20)
         self.declare_parameter("fixed_marker_max_speed_px_s", 100.0)
         self.declare_parameter("moving_marker_max_speed_px_s", 300.0)
@@ -229,7 +326,48 @@ class AiMapEstimatorNode(Node):
             fast_reacquire_frames=int(
                 self.get_parameter("fast_reacquire_frames").value
             ),
+            max_reacquire_jump_px=float(
+                self.get_parameter("max_reacquire_jump_px").value
+            ),
         )
+        self.hsv_search_radius_px = float(
+            self.get_parameter("hsv_search_radius_px").value
+        )
+        self.hsv_search_max_age = int(
+            self.get_parameter("hsv_search_max_age_frames").value
+        )
+        # Where colour last had the marble, and how many frames ago, so the local
+        # disc can follow a marble that goes missing for more than one frame.
+        self.hsv_search_px = None
+        self.hsv_search_age = 0
+        self.hsv_local_hits = 0
+        self.hole_tiebreak_enabled = bool(
+            self.get_parameter("hole_tiebreak_enabled").value
+        )
+        self.hole_tiebreak_disagreement_px = float(
+            self.get_parameter("hole_tiebreak_disagreement_px").value
+        )
+        self.hole_tiebreak_drops = 0
+        self.hsv_priority_mode = str(
+            self.get_parameter("hsv_priority_mode").value
+        ).strip().lower()
+        if self.hsv_priority_mode not in ("coverage", "always", "open", "off"):
+            raise ValueError(
+                f"hsv_priority_mode must be coverage|always|open|off, got "
+                f"{self.hsv_priority_mode}"
+            )
+        self.hsv_min_coverage = float(
+            self.get_parameter("hsv_min_coverage").value
+        )
+        self.last_hsv_coverage = float("nan")
+        self.hsv_priority_margin_m = float(
+            self.get_parameter("hsv_priority_margin_m").value
+        )
+        self.hsv_priority_disagreement_px = float(
+            self.get_parameter("hsv_priority_disagreement_px").value
+        )
+        self.hsv_priority_wins = 0
+        self.ai_rejected_reason = None
         self.hsv_marble_stats = {"ai": 0, "hsv": 0, "both": 0, "neither": 0}
         self.last_ball_source = "ai"
         self.last_hsv_xy = None
@@ -463,6 +601,142 @@ class AiMapEstimatorNode(Node):
         self.status_pub.publish(String(data=str(status)))
         self.confidence_pub.publish(Float32(data=float(confidence)))
 
+    def colour_coverage(self, hsv_xy, moving_rc):
+        """Fraction of the marble still inside the colour search polygon.
+
+        1.0 anywhere the mask is not cutting the marble; it falls off only in the
+        last few millimetres before a wall, where the marble's outline crosses
+        the polygon that DEFAULT_INSET_M pulls in. This is the quantity that
+        biases colour's centroid, so it is the one worth testing -- rather than
+        distance from the rim, which is only a proxy for it.
+
+        Rasterised on a small local canvas: the whole thing is a disc a dozen
+        pixels across.
+        """
+        polygon = hsv_marble.maze_polygon_px(moving_rc)
+        if polygon is None or hsv_xy is None:
+            return float("nan")
+        span = float(np.linalg.norm(np.asarray(moving_rc[1]) - np.asarray(moving_rc[0])))
+        if not np.isfinite(span) or span <= 1.0:
+            return float("nan")
+        radius = int(round(self.marble_radius_m * 1000.0 * span / 269.0))
+        if radius < 1:
+            return float("nan")
+        pad = radius + 2
+        cx, cy = float(hsv_xy[0]), float(hsv_xy[1])
+        side = 2 * pad + 1
+        origin = np.array([cx - pad, cy - pad], dtype=np.float32)
+        disc = np.zeros((side, side), np.uint8)
+        cv2.circle(disc, (pad, pad), radius, 255, -1)
+        inside = np.zeros((side, side), np.uint8)
+        cv2.fillConvexPoly(inside, (polygon - origin).astype(np.int32), 255)
+        total = int(np.count_nonzero(disc))
+        if total == 0:
+            return float("nan")
+        return float(np.count_nonzero(cv2.bitwise_and(disc, inside))) / total
+
+    def colour_should_settle(self, ai_xy, hsv_xy, moving_rc):
+        """True when a disagreement should be settled by colour, not the AI.
+
+        A disagreement needs both sources to have produced something, so this
+        never touches a frame the AI is carrying on its own.
+        """
+        if self.hsv_priority_mode == "off":
+            return False
+        if ai_xy is None or hsv_xy is None:
+            return False
+        if (
+            float(np.linalg.norm(np.asarray(ai_xy) - np.asarray(hsv_xy)))
+            <= self.hsv_priority_disagreement_px
+        ):
+            return False
+        if self.hsv_priority_mode == "always":
+            return True
+        if self.hsv_priority_mode == "coverage":
+            coverage = self.colour_coverage(hsv_xy, moving_rc)
+            self.last_hsv_coverage = coverage
+            # An uncomputable coverage means the quad or the scale is unusable,
+            # and colour is only trustworthy while the mask it depends on is.
+            return bool(np.isfinite(coverage)) and coverage >= self.hsv_min_coverage
+        # "open": only where the maze mask is not clipping the marble.
+        interior = hsv_marble.maze_polygon_px(
+            moving_rc, inset_m=self.hsv_priority_margin_m
+        )
+        if interior is None:
+            return False
+        point = (float(hsv_xy[0]), float(hsv_xy[1]))
+        return cv2.pointPolygonTest(interior, point, False) >= 0
+
+    def ai_landed_on_a_hole(self, ai_xy, hsv_xy, moving_rc):
+        """Index of the hole the AI mistook for the marble, or None.
+
+        Only answers when colour has a candidate of its own and puts the marble
+        somewhere else. A marble genuinely crossing a hole is a marble colour
+        sees on that same hole, the two agree, and this stays quiet -- which is
+        what keeps it from repeating the mistake of the blanket hole gate.
+        """
+        if not self.hole_tiebreak_enabled:
+            return None
+        if ai_xy is None or hsv_xy is None:
+            return None
+        if (
+            float(np.linalg.norm(np.asarray(ai_xy) - np.asarray(hsv_xy)))
+            <= self.hole_tiebreak_disagreement_px
+        ):
+            return None
+        # candidate_hole_index works in the trackers' [row, column].
+        ai_hole = candidate_hole_index(
+            np.asarray(ai_xy, dtype=np.float32)[::-1],
+            moving_rc,
+            margin_m=self.hole_rejection_margin_m,
+        )
+        if ai_hole is None:
+            return None
+        hsv_hole = candidate_hole_index(
+            np.asarray(hsv_xy, dtype=np.float32)[::-1],
+            moving_rc,
+            margin_m=self.hole_rejection_margin_m,
+        )
+        return None if hsv_hole == ai_hole else int(ai_hole)
+
+    def detect_marble_by_colour(self, frame, moving_rc):
+        """Colour search: a disc around the last sighting first, then the maze.
+
+        The local pass exists to let the area floor drop where it is safe to. It
+        is strictly additive -- if it finds nothing the full-maze search runs
+        unchanged at the strict floor, so this can only add detections, never
+        remove one that the previous code would have made.
+        """
+        local = None
+        if (
+            self.hsv_search_radius_px > 0.0
+            and self.hsv_search_px is not None
+            and self.hsv_search_age <= self.hsv_search_max_age
+        ):
+            local = hsv_marble.detect_marble(
+                frame,
+                moving_rc,
+                area_px2=hsv_marble.DEFAULT_LOCAL_AREA_PX2,
+                search_center_px=self.hsv_search_px,
+                search_radius_px=self.hsv_search_radius_px
+                * float(self.hsv_search_age + 1),
+            )
+        if local is not None:
+            self.hsv_local_hits += 1
+            self.hsv_search_px = np.asarray(local, dtype=np.float64)
+            self.hsv_search_age = 0
+            return local
+
+        found = hsv_marble.detect_marble(frame, moving_rc)
+        if found is not None:
+            self.hsv_search_px = np.asarray(found, dtype=np.float64)
+            self.hsv_search_age = 0
+        else:
+            self.hsv_search_age += 1
+            if self.hsv_search_age > self.hsv_search_max_age:
+                self.hsv_search_px = None
+        return found
+
     def on_image(self, image_message):
         frame = self.bridge.imgmsg_to_cv2(image_message, desired_encoding="bgr8")
         timestamp = ros_time_seconds(image_message.header.stamp)
@@ -529,7 +803,7 @@ class AiMapEstimatorNode(Node):
         ball_xy = ai_xy
         self.last_hsv_xy = None
         if self.hsv_marble_mode in ("shadow", "fuse") and moving_valid:
-            hsv_xy = hsv_marble.detect_marble(frame, moving_rc)
+            hsv_xy = self.detect_marble_by_colour(frame, moving_rc)
             key = (
                 "both" if (ai_xy is not None and hsv_xy is not None)
                 else "ai" if ai_xy is not None
@@ -543,19 +817,54 @@ class AiMapEstimatorNode(Node):
                 self.get_logger().info(
                     "marble sources over %d frames: both %.1f%%, ai only %.1f%%, "
                     "hsv only %.1f%%, neither %.1f%% -- 'hsv only' is what the "
-                    "pairing buys"
+                    "pairing buys; %.1f%% of colour hits came from the local "
+                    "disc; colour settled %d disagreements in the open, %d on "
+                    "a hole"
                     % (
                         total,
                         100.0 * counts["both"] / total,
                         100.0 * counts["ai"] / total,
                         100.0 * counts["hsv"] / total,
                         100.0 * counts["neither"] / total,
+                        100.0 * self.hsv_local_hits / total,
+                        self.hsv_priority_wins,
+                        self.hole_tiebreak_drops,
                     )
                 )
             self.last_hsv_xy = hsv_xy
             if self.hsv_marble_mode == "fuse":
+                ai_for_fusion = ai_xy
+                self.ai_rejected_reason = None
+                # Order matters only for the bookkeeping: both rules drop the
+                # same candidate, and a frame that trips both should be counted
+                # once, under the more specific diagnosis.
+                hole = self.ai_landed_on_a_hole(ai_xy, hsv_xy, moving_rc)
+                if hole is None and self.colour_should_settle(
+                    ai_xy, hsv_xy, moving_rc
+                ):
+                    self.hsv_priority_wins += 1
+                    self.ai_rejected_reason = (
+                        "disagreed, colour %.0f%% covered"
+                        % (100.0 * self.last_hsv_coverage)
+                        if np.isfinite(self.last_hsv_coverage)
+                        else "disagreed"
+                    )
+                    ai_for_fusion = None
+                if hole is not None:
+                    self.ai_rejected_reason = f"hole {hole + 1}"
+                    self.hole_tiebreak_drops += 1
+                    self.get_logger().warn(
+                        "AI put the marble on hole %d, %.0f px from where "
+                        "colour had it; keeping colour (%d so far)"
+                        % (
+                            hole + 1,
+                            float(np.linalg.norm(ai_xy - hsv_xy)),
+                            self.hole_tiebreak_drops,
+                        )
+                    )
+                    ai_for_fusion = None
                 fused = self.hybrid_ball.update(
-                    hsv_position=hsv_xy, ai_position=ai_xy
+                    hsv_position=hsv_xy, ai_position=ai_for_fusion
                 )
                 self.last_ball_source = fused.source
                 if np.all(np.isfinite(fused.measurement)):
@@ -676,10 +985,24 @@ class AiMapEstimatorNode(Node):
                     (255, 0, 255), cv2.MARKER_SQUARE, 16, 2
                 )
             if ai_xy is not None:
+                point = tuple(np.round(ai_xy).astype(int))
                 cv2.drawMarker(
-                    display, tuple(np.round(ai_xy).astype(int)),
-                    (0, 255, 255), cv2.MARKER_DIAMOND, 16, 2
+                    display, point, (0, 255, 255), cv2.MARKER_DIAMOND, 16, 2
                 )
+                # Struck through in red when this frame's AI candidate was
+                # thrown away, so "the yellow diamond jumped onto a hole" and
+                # "the yellow diamond dragged the estimate onto a hole" are
+                # different pictures rather than the same one.
+                if self.ai_rejected_reason is not None:
+                    cv2.drawMarker(
+                        display, point, (0, 0, 255), cv2.MARKER_TILTED_CROSS, 22, 2
+                    )
+                    cv2.putText(
+                        display, f"AI dropped: {self.ai_rejected_reason}",
+                        (point[0] + 14, point[1] + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 255), 1,
+                        cv2.LINE_AA,
+                    )
             if valid:
                 cv2.circle(
                     display,

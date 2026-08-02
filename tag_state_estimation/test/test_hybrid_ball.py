@@ -172,6 +172,72 @@ def test_moving_marble_is_reacquired_rather_than_outrunning_confirmation():
         raise AssertionError("moving marble was never reacquired")
 
 
+def test_colour_carries_the_frame_when_the_ai_jumps_onto_a_hole():
+    """The measured failure at the bottom-right hole.
+
+    On roughly 3% of the frames it fires, the learned detector reports a black
+    hole as the marble, at around 0.87 confidence. One live case put it 131 mm
+    from where colour had the marble. Deferring to the AI there loses the frame
+    twice: its position fails the jump test so nothing is published, and the
+    good colour candidate goes with it.
+    """
+    tracker = HybridBallTracker(
+        agreement_radius_px=12.0, max_reacquire_jump_px=48.0,
+        trust_hsv_alone=True,
+    )
+    start = np.array([200.0, 200.0])
+    _seed_tracker(tracker, start)
+    on_track = start + np.array([6.0, 0.0])
+    a_hole = start + np.array([135.0, 90.0])
+
+    result = tracker.update(hsv_position=on_track, ai_position=a_hole)
+    assert result.source == "hsv_disagreement"
+    assert np.allclose(result.measurement, on_track)
+
+
+def test_a_nearby_ai_candidate_still_outranks_colour_on_disagreement():
+    """Colour only takes over when the AI has left the track, not before."""
+    tracker = HybridBallTracker(
+        agreement_radius_px=5.0, max_reacquire_jump_px=48.0,
+        trust_hsv_alone=True,
+    )
+    start = np.array([200.0, 200.0])
+    _seed_tracker(tracker, start)
+    result = tracker.update(
+        hsv_position=start + np.array([2.0, 0.0]),
+        ai_position=start + np.array([20.0, 0.0]),
+    )
+    assert result.source == "ai_disagreement"
+    assert np.allclose(result.measurement, start + np.array([20.0, 0.0]))
+
+
+def test_one_detector_carries_a_marble_up_to_the_full_speed_budget():
+    """HSV alone must keep a fast marble, not just a slow one.
+
+    max_reacquire_jump_px is now the only speed bound in the estimator, sized
+    from 2 m/s at 1.03 px/mm and ~45 fps. A marble inside that budget has to be
+    accepted on every frame; at 25 px it was capped at 1.05 m/s and anything
+    quicker was dropped frame after frame, because _confirm_reacquisition tests
+    against the same bound and so could never recover it either.
+    """
+    tracker = HybridBallTracker(max_reacquire_jump_px=48.0, trust_hsv_alone=True)
+    start = np.array([200.0, 200.0])
+    _seed_tracker(tracker, start)
+    for step in range(1, 7):
+        moving = start + np.array([40.0 * step, 0.0])
+        result = tracker.update(hsv_position=moving)
+        assert result.source == "hsv_only", f"lost the marble on step {step}"
+        assert np.allclose(result.measurement, moving)
+
+
+def test_a_candidate_beyond_the_speed_budget_is_still_refused():
+    tracker = HybridBallTracker(max_reacquire_jump_px=48.0, trust_hsv_alone=True)
+    _seed_tracker(tracker, np.array([200.0, 200.0]))
+    result = tracker.update(hsv_position=np.array([400.0, 200.0]))
+    assert result.source == "kalman_occlusion"
+    assert np.all(np.isnan(result.measurement))
+
+
 def test_fused_position_after_loss_requires_confirmation():
     tracker = HybridBallTracker(
         occlusion_grace_frames=10,
