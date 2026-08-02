@@ -10,6 +10,7 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 
 from tag_interfaces.msg import StateEstimate
 from tag_interfaces.srv import HiwonderReset
@@ -27,6 +28,7 @@ class ArduinoBallLossBridge(Node):
         super().__init__("arduino_ball_loss_bridge")
         self.args = args
         self.ser = None
+        self.missing_reply_count = 0
         self.connect_serial()
 
         self.detected_count = 0
@@ -35,52 +37,122 @@ class ArduinoBallLossBridge(Node):
         self.last_stop_time = 0.0
         self.auto_enabled = True
 
-        self.create_subscription(StateEstimate, args.topic, self.cb, 10)
+        self.subscription = None
+        if not args.monitor_only:
+            self.subscription = self.create_subscription(
+                StateEstimate, args.topic, self.cb, 10
+            )
         self.reset_client = self.create_client(HiwonderReset, args.reset_service)
-        self.send(args.stop_cmd)
-        self.get_logger().info(
-            f"Arduino bridge on {args.port} watching {args.topic}. "
-            "finite x_b/y_b = ball detected; continuously missing for "
-            f"{args.lost_seconds:.1f}s sends '{args.run_cmd}'."
-        )
+        if not args.monitor_only:
+            self.send(args.stop_cmd)
+        self.status_timer = None
+        if args.status_every > 0:
+            self.status_timer = self.create_timer(
+                args.status_every, self.poll_status
+            )
+        if args.monitor_only:
+            self.get_logger().info(
+                f"Arduino monitor on {args.port}; autonomous firmware owns "
+                f"solenoid control. Lux status interval: {args.status_every:.1f}s."
+            )
+        else:
+            self.get_logger().info(
+                f"Arduino bridge on {args.port} watching {args.topic}. "
+                "finite x_b/y_b = ball detected; continuously missing for "
+                f"{args.lost_seconds:.1f}s sends '{args.run_cmd}'. "
+                f"Lux status interval: {args.status_every:.1f}s."
+            )
 
     def connect_serial(self):
         if self.ser is not None:
             try:
                 self.ser.close()
-            except serial.SerialException:
+            except Exception:
                 pass
         port = resolve_port(self.args.port)
-        self.ser = serial.Serial(port, self.args.baud, timeout=0.05)
+        self.ser = serial.Serial(
+            port, self.args.baud, timeout=self.args.serial_reply_timeout
+        )
         time.sleep(self.args.serial_warmup)
+        self.ser.reset_input_buffer()
         self.get_logger().info(f"Connected Arduino serial: {port}")
+
+    @staticmethod
+    def expected_reply(cmd):
+        cmd = cmd.strip().lower()
+        if cmd in ("run", "fire", "test"):
+            return "ok pulse"
+        if cmd == "stop":
+            return "ok stop"
+        if cmd == "status":
+            return "ok lux="
+        return "ok"
+
+    def recover_serial(self, reason):
+        self.get_logger().warn(f"Serial watchdog reconnect: {reason}")
+        try:
+            self.connect_serial()
+            self.ser.write(b"status\n")
+            self.ser.flush()
+            reply = self.ser.readline().decode(
+                "utf-8", errors="ignore"
+            ).strip()
+            if reply.startswith("ok lux="):
+                self.get_logger().info(f"Arduino watchdog status -> {reply}")
+                self.missing_reply_count = 0
+                return True
+            self.get_logger().warn(
+                "Arduino watchdog status had no valid reply"
+                + (f": {reply}" if reply else "")
+            )
+        except (Exception, SystemExit) as exc:
+            self.get_logger().warn(f"Serial watchdog reconnect failed: {exc}")
+        return False
 
     def send(self, cmd):
         data = (cmd.strip() + "\n").encode("utf-8")
-        for attempt in range(2):
-            try:
-                self.ser.write(data)
-                self.ser.flush()
-                self.get_logger().info(f"Arduino <- {cmd}")
-                # Log Arduino response for diagnostics
-                try:
-                    reply = self.ser.readline().decode("utf-8", errors="ignore").strip()
-                    if reply:
-                        self.get_logger().info(f"Arduino -> {reply}")
-                except (OSError, serial.SerialException):
-                    pass
+        if self.ser is None or not self.ser.is_open:
+            if not self.recover_serial("port was closed"):
+                return False
+        try:
+            # A late reply must not be mistaken for this command's ACK.
+            self.ser.reset_input_buffer()
+            self.ser.write(data)
+            self.ser.flush()
+            self.get_logger().info(f"Arduino <- {cmd}")
+            reply = self.ser.readline().decode(
+                "utf-8", errors="ignore"
+            ).strip()
+            expected = self.expected_reply(cmd)
+            if reply:
+                self.get_logger().info(f"Arduino -> {reply}")
+            if reply.startswith(expected):
+                self.missing_reply_count = 0
                 return True
-            except (OSError, serial.SerialException) as exc:
-                self.get_logger().warn(
-                    f"Serial write failed on attempt {attempt + 1}: {exc}"
+
+            self.missing_reply_count += 1
+            self.get_logger().warn(
+                f"Arduino ACK missing or invalid for '{cmd}' "
+                f"({self.missing_reply_count}/{self.args.max_missing_replies})"
+            )
+            if self.missing_reply_count >= self.args.max_missing_replies:
+                # Reopen and probe only. Do not resend an actuating command here:
+                # the Arduino may have pulsed even if its ACK was lost.
+                self.recover_serial(
+                    f"{self.missing_reply_count} consecutive missing replies"
                 )
-                time.sleep(0.5)
-                try:
-                    self.connect_serial()
-                except (OSError, serial.SerialException) as reconnect_exc:
-                    self.get_logger().warn(f"Serial reconnect failed: {reconnect_exc}")
-                    time.sleep(1.0)
-        return False
+            return False
+        except Exception as exc:
+            # Reopen and probe, but leave command retry to the normal callback
+            # schedule to avoid a possible double solenoid pulse.
+            self.get_logger().warn(f"Serial write failed: {exc}")
+            try:
+                self.recover_serial("write/read exception")
+            except Exception as reconnect_exc:
+                self.get_logger().warn(
+                    f"Serial reconnect failed unexpectedly: {reconnect_exc}"
+                )
+            return False
 
     def reset_board(self):
         if not self.args.reset_with_test:
@@ -96,6 +168,10 @@ class ArduinoBallLossBridge(Node):
         self.get_logger().info(
             f"Reset board -> {self.args.reset_service} max_temp={req.max_temp}"
         )
+
+    def poll_status(self):
+        """Log Arduino lux and auto state without opening a second serial client."""
+        self.send(self.args.status_cmd)
 
     def start_test_mode(self):
         if not self.test_active:
@@ -256,6 +332,19 @@ def main():
     parser.add_argument("--detected_frames", type=int, default=5)
     parser.add_argument("--stop_every", type=float, default=2.0)
     parser.add_argument("--serial_warmup", type=float, default=2.0)
+    parser.add_argument("--serial_reply_timeout", type=float, default=0.25)
+    parser.add_argument("--max_missing_replies", type=int, default=3)
+    parser.add_argument(
+        "--monitor_only",
+        action="store_true",
+        help="Poll status only; do not control the solenoid from state estimation.",
+    )
+    parser.add_argument(
+        "--status_every",
+        type=float,
+        default=1.0,
+        help="Seconds between Arduino lux/status log lines; 0 disables polling.",
+    )
     parser.add_argument("--run_cmd", default="run")
     parser.add_argument("--stop_cmd", default="stop")
     parser.add_argument("--fire_cmd", default="fire")
@@ -271,15 +360,19 @@ def main():
     threading.Thread(target=node.stdin_loop, daemon=True).start()
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
         try:
-            node.send(args.stop_cmd)
-        except (OSError, serial.SerialException):
+            if not args.monitor_only:
+                node.send(args.stop_cmd)
+        except Exception:
             pass
         if node.ser is not None:
             node.ser.close()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
