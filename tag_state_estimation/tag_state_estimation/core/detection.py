@@ -61,6 +61,7 @@ class Detector:
         ai_max_reacquire_jump_px=25.0,
         ai_occlusion_grace_frames=90,
         ai_far_reacquire_confirm_frames=3,
+        ai_fast_reacquire_frames=3,
         ai_hole_rejection_enabled=True,
         ai_hole_rejection_margin_m=0.0025,
         ai_hole_rejection_delay_sec=2.0,
@@ -123,6 +124,7 @@ class Detector:
             max_reacquire_jump_px=ai_max_reacquire_jump_px,
             occlusion_grace_frames=ai_occlusion_grace_frames,
             far_reacquire_confirm_frames=ai_far_reacquire_confirm_frames,
+            fast_reacquire_frames=ai_fast_reacquire_frames,
         )
         self.frame_index = 0
         self.last_hsv_found = False

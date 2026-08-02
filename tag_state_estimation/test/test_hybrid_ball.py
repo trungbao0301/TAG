@@ -34,11 +34,25 @@ def test_fuses_agreeing_hsv_and_ai_positions():
     assert abs(result.disagreement_px - np.sqrt(20.0)) < 1e-6
 
 
-def test_ai_reacquires_after_loss_only_after_consistent_confirmation():
+def test_ai_resumes_immediately_after_a_short_gap():
     tracker = HybridBallTracker(
         max_reacquire_jump_px=25.0, far_reacquire_confirm_frames=3
     )
     _seed_tracker(tracker, np.array([100.0, 200.0]))
+    tracker.update()
+    result = tracker.update(ai_position=np.array([108.0, 212.0]))
+    assert result.source == "ai_resumed"
+    assert np.allclose(result.measurement, [108.0, 212.0])
+
+
+def test_reacquisition_is_confirmed_once_the_gap_outlasts_the_fast_path():
+    tracker = HybridBallTracker(
+        max_reacquire_jump_px=25.0,
+        far_reacquire_confirm_frames=3,
+        fast_reacquire_frames=1,
+    )
+    _seed_tracker(tracker, np.array([100.0, 200.0]))
+    tracker.update()
     tracker.update()
     first = tracker.update(ai_position=np.array([108.0, 212.0]))
     second = tracker.update(ai_position=np.array([109.0, 212.0]))
@@ -127,9 +141,42 @@ def test_nearby_ai_only_candidate_remains_accepted():
     assert np.allclose(result.measurement, [105.0, 207.0])
 
 
+def test_moving_marble_is_reacquired_rather_than_outrunning_confirmation():
+    """A marble both detectors can see must not stay lost because it is moving.
+
+    Ten pixels per frame is 0.42 m/s on this board -- ordinary play, not a
+    corner case. The confirmation test used to compare each candidate against a
+    running average of the previous ones, which a marble at that speed outran,
+    so the counter reset every second frame and never confirmed.
+    """
+    tracker = HybridBallTracker(
+        agreement_radius_px=12.0,
+        max_reacquire_jump_px=25.0,
+        far_reacquire_confirm_frames=3,
+        fast_reacquire_frames=0,
+        trust_hsv_alone=True,
+    )
+    start = np.array([300.0, 180.0])
+    _seed_tracker(tracker, start)
+    tracker.update()
+
+    for step in range(1, 5):
+        moving = start + np.array([10.0 * step, 0.0])
+        result = tracker.update(hsv_position=moving, ai_position=moving)
+        if np.all(np.isfinite(result.measurement)):
+            assert result.source == "fused_reacquired_confirmed"
+            # Accepted where the marble is now, not averaged over the window.
+            assert np.allclose(result.measurement, moving)
+            break
+    else:
+        raise AssertionError("moving marble was never reacquired")
+
+
 def test_fused_position_after_loss_requires_confirmation():
     tracker = HybridBallTracker(
-        occlusion_grace_frames=10, far_reacquire_confirm_frames=3
+        occlusion_grace_frames=10,
+        far_reacquire_confirm_frames=3,
+        fast_reacquire_frames=0,
     )
     tracker.update(
         hsv_position=np.array([100.0, 200.0]),

@@ -155,6 +155,12 @@ class AiMapEstimatorNode(Node):
         # letting it decide anything, which is how to measure the hit rate before
         # handing it authority. fuse lets either detector carry the frame.
         self.declare_parameter("hsv_marble_mode", "fuse")
+        # Gap length, in frames, that still counts as the same marble track. A
+        # candidate arriving within it is accepted straight away if it is no
+        # further from the last position than the marble could have rolled;
+        # anything longer or further still serves the full confirmation window.
+        # 0 restores the old behaviour of confirming after every single miss.
+        self.declare_parameter("fast_reacquire_frames", 3)
         # Disc erased from every corner search window around the marble's previous
         # position. 10 px is about 5 mm here, so it covers a frame of travel with
         # margin while staying well inside the 10 mm that separates a dot centre
@@ -219,7 +225,10 @@ class AiMapEstimatorNode(Node):
             self.get_parameter("hsv_marble_mode").value
         ).strip().lower()
         self.hybrid_ball = HybridBallTracker(
-            trust_hsv_alone=self.hsv_marble_mode == "fuse"
+            trust_hsv_alone=self.hsv_marble_mode == "fuse",
+            fast_reacquire_frames=int(
+                self.get_parameter("fast_reacquire_frames").value
+            ),
         )
         self.hsv_marble_stats = {"ai": 0, "hsv": 0, "both": 0, "neither": 0}
         self.last_ball_source = "ai"
