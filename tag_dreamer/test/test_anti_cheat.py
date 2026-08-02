@@ -223,3 +223,98 @@ def test_ratio_on_is_tighter_than_the_flat_cap_for_a_small_roll():
     roll(env, (0.0, 0.0), (0.004, 0.0))
     assert budget(env) == pytest.approx(0.012)
     assert budget(env) < env.anti_cheat_max_step_m
+
+
+def make_reward_env(**over):
+    """A stub for _get_reward, carrying only what that method reads or writes.
+
+    Deliberately exhaustive rather than minimal here: _get_reward touches a lot,
+    and an attribute missing from this list means the test fails loudly instead
+    of exercising a different branch by accident.
+    """
+    env = types.SimpleNamespace(
+        ball_occluded=False,
+        ball_detected=True,
+        cheat=False,
+        off_path=False,
+        off_path_steps=0,
+        progress=0,
+        prev_pos_path=100,
+        implausible_jump_steps=0,
+        resync_progress_after_gap=False,
+        last_step_implausible=False,
+        last_gap_sec=0.0,
+        travel_since_credit=0.010,
+        segment_start=np.array([0.0, 0.0], dtype=np.float32),
+        anti_cheat_enabled=False,
+        anti_cheat_triggered=0,
+        anti_cheat_confirm_steps=1,
+        anti_cheat_resync_steps=1,
+        anti_cheat_travel_ratio=0.0,
+        anti_cheat_min_step_m=0.010,
+        anti_cheat_max_step_m=0.057,
+        anti_cheat_max_speed_mps=1.0,
+        stuck_anchor_pos=None,
+        stuck_since=None,
+        backward_progress_scale=1.0,
+        step_cost=0.0,
+        p=types.SimpleNamespace(distance=0.0002, num_points=9307),
+        _accumulate_travel=lambda *_: None,
+        _crossed_blocked=lambda *_: False,
+        _checkpoint_bonus_reward=lambda: 0.0,
+        _stuck_reward=lambda *_: 0.0,
+        _sync_best_checkpoint=lambda: None,
+    )
+    for key, value in over.items():
+        setattr(env, key, value)
+    return env
+
+
+def reward_for(env, path_index):
+    env._closest_point = lambda *_: (path_index, np.zeros(2, dtype=np.float32))
+    obs = {"states": np.zeros(4, dtype=np.float32)}
+    return TagGym._get_reward(env, obs)
+
+
+def test_step_cost_is_charged_on_a_scored_step():
+    """Standing still has to be worth less than trying something.
+
+    With the cost off, an out-and-back nets exactly zero at scale 1.0, and zero
+    beats every forward option that carries a risk of falling -- so the policy
+    parks. The cost is what makes parking negative.
+    """
+    free = reward_for(make_reward_env(step_cost=0.0), 100)
+    charged = reward_for(make_reward_env(step_cost=0.00002), 100)
+    assert free == pytest.approx(0.0)
+    assert charged == pytest.approx(-0.00002)
+
+
+def test_step_cost_leaves_the_probing_advantage_untouched():
+    """The gap between probing and parking is the checkpoint bonus, only.
+
+    Both pay the same per step, so the cost cannot be tuned to favour probing;
+    it can only push the whole episode negative. Worth pinning down, because
+    that is the thing that bounds how large it may be.
+    """
+    bonus = 0.02
+    for cost in (0.0, 0.00002, 0.0002):
+        park = reward_for(make_reward_env(step_cost=cost), 100)
+        probe = reward_for(
+            make_reward_env(
+                step_cost=cost, _checkpoint_bonus_reward=lambda: bonus
+            ),
+            100,
+        )
+        assert probe - park == pytest.approx(bonus)
+
+
+def test_step_cost_is_not_charged_while_the_marble_is_missing():
+    """A detector dropout is not the policy loitering, and must not be billed."""
+    env = make_reward_env(step_cost=0.00002, ball_detected=False)
+    assert reward_for(env, 100) == pytest.approx(0.0)
+
+
+def test_step_cost_is_not_charged_off_path():
+    env = make_reward_env(step_cost=0.00002)
+    assert reward_for(env, -1) == pytest.approx(0.0)
+    assert env.off_path is True

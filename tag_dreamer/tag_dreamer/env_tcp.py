@@ -282,6 +282,11 @@ class TagGym(gym.Env):
         self.checkpoint_bonus = float(
             os.environ.get("TAG_CHECKPOINT_BONUS", "0.02")
         )
+        # Keep forward progress unchanged while making a learned backtracking
+        # loop more expensive than the same distance earns going forward.
+        self.backward_progress_scale = max(
+            1.0, float(os.environ.get("TAG_BACKWARD_PROGRESS_SCALE", "1.0"))
+        )
         self.best_checkpoint = 0
         self._waypoint_indices = None
         self.resync_progress_after_gap = False
@@ -331,6 +336,40 @@ class TagGym(gym.Env):
         self.stuck_anchor_pos = None
         self.stuck_since = None
         self.stuck_events = 0
+        # Charged on every scored step, so that standing still is worth less
+        # than trying something. 0 disables it, which is the default; it is only
+        # meant to be used with TAG_BACKWARD_PROGRESS_SCALE back at 1.0.
+        #
+        # The pair replaces using the backward multiplier as the stall cure.
+        # That multiplier worked -- at scale 1.0 an out-and-back nets exactly
+        # zero, and zero beats every forward option once those carry a risk of
+        # falling, so the policy parks -- but it cannot tell parking apart from
+        # probing, and probing at the frontier is the only behaviour that makes
+        # progress. A flat cost per step makes parking negative without taxing
+        # one direction of travel more than the other.
+        #
+        # What the size buys is NOT the gap between probing and parking. That
+        # gap is the checkpoint bonus and nothing else -- probing an unexplored
+        # stretch and coming back earns the bonuses once, parking earns nothing,
+        # and both pay the same cost per step, so the difference is a flat
+        # 2 * checkpoint_bonus whatever this is set to. The size only decides how
+        # hard the whole episode is pushed negative.
+        #
+        # Which is what bounds it. A per-step cost stops accruing when the
+        # episode ends, so once surviving a stalled episode costs more than
+        # TAG_REWARD_ON_FAIL, diving into a hole becomes the better move and the
+        # policy will learn to. Against the 3000-step cap and a fail penalty of
+        # 0.10 that is c < 0.10 / 3000 = 0.000033, and that bound assumes the
+        # stalled episode earns nothing further, which is exactly the case this
+        # is meant to act on.
+        #
+        # So 0.00002 to 0.00003, an order of magnitude below what "a tenth of
+        # what a moving step earns" would suggest. At 0.00002 a full stalled
+        # episode costs 0.06 against a fail penalty of 0.10, which leaves room;
+        # at 0.0002 it costs 0.60 and the marble is better off in a hole.
+        self.step_cost = max(
+            0.0, float(os.environ.get("TAG_STEP_COST", "0.0"))
+        )
 
         self.ball_detected = False
         self.ball_occluded = False
@@ -376,6 +415,19 @@ class TagGym(gym.Env):
             os.environ.get("TAG_REST_DURATION_SEC", "240")
         )
         self.rest_window_start = time.monotonic()
+
+        # Focused diagnostics for the section where the current policy plateaus.
+        # Keep this cheap and sparse so it can stay enabled during real training.
+        self.diag_checkpoint_start = int(
+            os.environ.get("TAG_DIAG_CHECKPOINT_START", "95")
+        )
+        self.diag_checkpoint_end = int(
+            os.environ.get("TAG_DIAG_CHECKPOINT_END", "105")
+        )
+        self.diag_every_steps = max(
+            1, int(os.environ.get("TAG_DIAG_EVERY_STEPS", "10"))
+        )
+        self.diag_last_checkpoint = None
 
         self.last_time = 0
         self.progress = 0
@@ -437,6 +489,24 @@ class TagGym(gym.Env):
             f"offpath_confirm={self.off_path_confirm_steps}, "
             f"offpath_penalty={self.off_path_penalty:.3f}"
         )
+        print(
+            "[TCP ENV] checkpoint diagnostics: "
+            f"range={self.diag_checkpoint_start}-{self.diag_checkpoint_end}, "
+            f"every={self.diag_every_steps} steps"
+        )
+        print(
+            "[TCP ENV] backward progress scale: "
+            f"{self.backward_progress_scale:.2f}x"
+        )
+        print(
+            "[TCP ENV] step cost: "
+            f"{self.step_cost:.5f} per scored step"
+            + (
+                ""
+                if self.step_cost > 0.0
+                else "  (off -- parking on the path is free)"
+            )
+        )
 
     def _request(self, obj):
         msg = json.dumps(obj, separators=(",", ":")).encode("utf-8") + b"\n"
@@ -472,6 +542,8 @@ class TagGym(gym.Env):
                 reward = self.reward_on_fail
         if self.success:
             reward += self.reward_on_goal
+
+        self._maybe_log_checkpoint_diagnostics(obs, action, reward, done)
 
         if done:
             if self.success:
@@ -535,6 +607,7 @@ class TagGym(gym.Env):
         self.stuck_anchor_pos = None
         self.stuck_since = None
         self.stuck_events = 0
+        self.diag_last_checkpoint = None
 
         self._send_action(np.zeros((2,)))
 
@@ -557,6 +630,12 @@ class TagGym(gym.Env):
         # on the first scoring step of every episode -- observed as
         # "reached 2/61, bonus=+0.040", two checkpoints at once for arriving.
         self.best_checkpoint = self._checkpoint_at(path_idx)
+        print(
+            "[CP-DIAG-RESET] "
+            f"episode={self.episodes} path_idx={path_idx} "
+            f"checkpoint={self.best_checkpoint} "
+            f"x={float(obs['states'][2]):.5f} y={float(obs['states'][3]):.5f}"
+        )
         self.progress = 0
         self.last_time = time.time()
         self.episode_start_time = time.monotonic()
@@ -735,6 +814,62 @@ class TagGym(gym.Env):
             f"bonus={gained * self.checkpoint_bonus:+.3f}"
         )
         return gained * self.checkpoint_bonus
+
+    def _maybe_log_checkpoint_diagnostics(self, obs, action, reward, done):
+        """Log compact state/action evidence around the known 95-105 plateau."""
+        position = np.asarray(obs["states"][2:4], dtype=np.float32)
+        path_idx, path_point = self._closest_point(position)
+        current_checkpoint = (
+            self._checkpoint_at(path_idx) if path_idx >= 0 else -1
+        )
+        in_range = (
+            self.diag_checkpoint_start
+            <= current_checkpoint
+            <= self.diag_checkpoint_end
+        )
+        checkpoint_changed = current_checkpoint != self.diag_last_checkpoint
+        if not (
+            in_range
+            and (
+                checkpoint_changed
+                or done
+                or self.steps % self.diag_every_steps == 0
+            )
+        ):
+            self.diag_last_checkpoint = current_checkpoint
+            return
+
+        indices = self._waypoint_path_indices()
+        next_checkpoint = min(self.best_checkpoint + 1, len(indices))
+        target_array_index = min(max(next_checkpoint - 1, 0), len(indices) - 1)
+        target = self.p.points[indices[target_array_index]]
+        path_distance = (
+            float(np.linalg.norm(position - path_point))
+            if path_idx >= 0 and np.all(np.isfinite(path_point))
+            else float("nan")
+        )
+        raw_action = np.asarray(action, dtype=np.float32)
+        vel_1, vel_2 = self._action_to_command(raw_action)
+        print(
+            "[CP-DIAG] "
+            f"episode={self.episodes} step={self.steps} "
+            f"checkpoint={current_checkpoint} best={self.best_checkpoint} "
+            f"path_idx={path_idx} path_dist_mm={path_distance * 1000.0:.2f} "
+            f"x={float(position[0]):.5f} y={float(position[1]):.5f} "
+            f"vx={float(self.ball_velocity[0]):.5f} "
+            f"vy={float(self.ball_velocity[1]):.5f} "
+            f"alpha={float(obs['states'][0]):.5f} "
+            f"beta={float(obs['states'][1]):.5f} "
+            f"action_1={float(raw_action[0]):+.4f} "
+            f"action_2={float(raw_action[1]):+.4f} "
+            f"cmd_1={vel_1:+.1f} cmd_2={vel_2:+.1f} "
+            f"target_checkpoint={next_checkpoint} "
+            f"target_x={float(target[0]):.5f} target_y={float(target[1]):.5f} "
+            f"reward={float(reward):+.5f} "
+            f"detected={int(self.ball_detected)} offpath={int(self.off_path)} "
+            f"done={int(done)}"
+        )
+        self.diag_last_checkpoint = current_checkpoint
 
     def _active_ball_loss_grace(self):
         checkpoint = self._checkpoint_for_occlusion()
@@ -1026,12 +1161,18 @@ class TagGym(gym.Env):
 
             self.implausible_jump_steps = 0
             self.progress = curr_pos_path - self.prev_pos_path
-            reward = float(curr_pos_path - self.prev_pos_path) * 0.004 / 16.0
+            reward = float(self.progress) * 0.004 / 16.0
+            if self.progress < 0:
+                reward *= self.backward_progress_scale
             self.prev_pos_path = curr_pos_path
             reward += self._checkpoint_bonus_reward()
             # This advance has been paid for; the next one needs fresh travel.
             self.travel_since_credit = 0.0
             reward += self._stuck_reward(obs["states"][2:4])
+            # Only on scored steps. The branches above return early while the
+            # marble is missing or off-path, and charging those would penalise a
+            # detector dropout rather than the policy.
+            reward -= self.step_cost
         return reward
 
     def _accumulate_travel(self, ball_pos):
