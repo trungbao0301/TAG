@@ -106,22 +106,11 @@ unset TAG_OCCLUSION_ZONES_FILE
 # and break that: 12 mm adds 0.9 points of marble coverage and 2 jump pairs.
 export TAG_PATH_TOLERANCE_M=0
 
-# Penalty for losing the marble down a hole. Sized against the reward scale: the
-# full path is worth only 9294 pts * 0.004/16 = 2.324, so -0.20 was 8.6% of a
-# perfect run and needed 160 mm of path to earn back. At the ~3% progress reached
-# early in training that made EVERY episode return negative no matter how well the
-# marble played, which is what the -0.16..-0.20 returns in the log showed. -0.05 is
-# 2.2% of a full run (40 mm of path) and leaves an early episode net positive, so
-# progress reward can actually drive learning.
-export TAG_REWARD_ON_FAIL=-0.05
+# Penalty for losing the marble down a hole.
+export TAG_REWARD_ON_FAIL=-0.10
 export TAG_TIMEOUT_STEPS=3000
-# TAG_TIMEOUT_PENALTY deliberately unset: env_tcp.py defaults it to
-# reward_on_fail, so it tracks the line above. It used to be pinned at -0.20,
-# which is the same inversion the comment above warns about, one level up:
-# 3000 steps is ~120 s of surviving at the measured 25 Hz, and that was charged
-# 4x what falling down a hole after 4 s costs. Under that ranking the cheapest
-# way out of a stretch the policy cannot solve is to drop the marble
-# immediately, so keeping it alive was the punished behaviour.
+# Keep timeout at its previous value instead of inheriting reward_on_fail.
+export TAG_TIMEOUT_PENALTY=-0.05
 # Anti-cheat. The budget is dt-scaled on purpose: allowed advance along the path
 # per step = min(MAX_STEP_M, max(MIN_STEP_M, MAX_SPEED_MPS * step_dt)). Do NOT
 # express "flag a 10 mm skip" as MAX_STEP_M=0.010 -- step_dt here ranges 40-800 ms
@@ -201,28 +190,32 @@ export TAG_ANTICHEAT_TRAVEL_RATIO=0
 # measurement. If OFFPATH starts firing on single glitch frames, raise to 3 or 4
 # rather than back to 10.
 export TAG_OFFPATH_CONFIRM_STEPS=1
-# -0.10, softened from -0.15. This is the shortcut penalty: the traps are the
-# painted zones and the sealed corridor boundaries, and crossing one ends the
-# episode.
-#
-# It stays above the -0.05 a hole costs, and that ordering is the part not to
-# lose. Both endings are terminal, so if a trap were the cheaper exit the policy
-# would have no reason to prefer driving the maze over cutting across it. -0.10
-# keeps it twice the price of a hole while taking the sting out: against the
-# +0.03 to +0.07 an episode earns, -0.15 was two to five episodes of progress for
-# one crossing, and crossings are now caught far more often since the check looks
-# at the whole step rather than where it landed.
-export TAG_OFFPATH_PENALTY=-0.10
+# Penalty for crossing a painted trap or sealed corridor boundary.
+export TAG_OFFPATH_PENALTY=-0.30
 
 export TAG_STUCK_WINDOW_SEC=5
 export TAG_STUCK_RADIUS_M=0.003
 export TAG_STUCK_PENALTY=0
 
+# Backward now costs exactly what forward earns. The 1.5x here did break the
+# learned 104 -> 93 -> 104 loop, and the reason is worth keeping in mind: at 1.0
+# an out-and-back nets zero, and zero beats every forward option once those risk
+# a fall, so the policy parks. But the multiplier cannot tell parking apart from
+# probing, and probing at the frontier is the only thing that makes progress --
+# measured on 103-105, five probes came to -0.064 against 0.000 for not moving.
+# TAG_STEP_COST below does the same job without taxing one direction.
+export TAG_BACKWARD_PROGRESS_SCALE=1.0
+# Flat charge per scored step, so parking is negative while probing is not
+# singled out. Bounded by TAG_REWARD_ON_FAIL: the cost stops when the episode
+# ends, so above 0.10/3000 = 0.000033 the marble is better off diving into a
+# hole than surviving a stalled episode.
+export TAG_STEP_COST=0
+
 exec "$PYTHON_BIN" -m dreamerv3.train \
   --configs tag large \
   --task gym_tag_dreamer:tag-ros-v0 \
   --logdir "$LOGDIR" \
-  --replay_size 1e6 \
+  --replay_size 5e6 \
   --run.script train_top5 \
   --run.train_ratio 128 \
   --run.save_every 20 \
