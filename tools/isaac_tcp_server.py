@@ -400,6 +400,8 @@ class Board:
         self.camera = None
         self.dof_alpha = None
         self.dof_beta = None
+        self.dof_arm = None
+        self.dof_rod = None
         self.episode_steps = 0
         self.total_steps = 0
         self.last_camera = None
@@ -433,6 +435,14 @@ class Board:
                 self.dof_beta = i
         if self.dof_alpha is None or self.dof_beta is None:
             raise SystemExit("could not find the two tilt joints in %s" % names)
+        # The Furuta pendulum, when the board carries one, shares this
+        # articulation: arm about Z, rod hanging from the arm.
+        self.dof_arm = next((i for i, n in enumerate(names) if "RotaryArm" in n
+                             and "Rod" not in n), None)
+        self.dof_rod = next((i for i, n in enumerate(names) if "PendulumRod" in n), None)
+        if self.dof_rod is not None:
+            print("[sim] pendulum present: arm dof=%s rod dof=%s"
+                  % (self.dof_arm, self.dof_rod))
         print("[sim] dofs: %s  alpha=%d beta=%d" % (names, self.dof_alpha, self.dof_beta))
 
         if self.args.image in ("camera", "composite"):
@@ -444,7 +454,29 @@ class Board:
                 self.sim.step(render=True)
         if self.args.image == "composite":
             self._build_composite_background()
+        self.rest_height = None
         self.reset()
+        self._calibrate_rest_height()
+
+    def _calibrate_rest_height(self):
+        """Measure where a settled marble sits, instead of assuming.
+
+        Placements used mesh_hi (the TOP OF THE WALLS) plus a radius, which is
+        fine from the fixed start -- open floor there, so the marble drops in --
+        but the spread starts sit anywhere along the path, and the path runs
+        close to walls. A marble released at wall height above a wall lands on
+        top of it and stays: the tops are flat and 7 degrees of tilt will not
+        roll it off. That is the marble that "gets stuck and never moves".
+        """
+        for _ in range(int(0.6 / self.physics_dt)):
+            self.sim.step(render=False)
+        pos, _ = self.marble.get_world_pose()
+        world = Gf.Vec3d(float(pos[0]), float(pos[1]), float(pos[2]))
+        local = self.mesh_world_now().GetInverse().Transform(world)
+        self.rest_height = float(local[1])
+        print("[sim] marble rests %.1f mm up the mesh (wall tops are %.1f mm); "
+              "spread starts will use that height"
+              % (self.rest_height * 1000.0, self.mesh_hi[1] * 1000.0))
 
     def _build_composite_background(self):
         """One render of the maze with the marble out of shot, kept as a backdrop.
@@ -523,6 +555,32 @@ class Board:
             return None
         return float(x - BOARD_WIDTH_M / 2.0), float(y - BOARD_HEIGHT_M / 2.0)
 
+    def pendulum_state(self):
+        """Pendulum state in the form the integration design asks for, or None.
+
+        Angles come straight from the articulation. In this asset the rod is
+        authored hanging, so a joint angle of 0 is DOWN; theta is reported
+        measured from upright to match the firmware's convention, and `upright`
+        follows from it.
+        """
+        if self.dof_rod is None:
+            return None
+        q = np.asarray(self.articulation.get_joint_positions(), dtype=np.float64)
+        dq = np.asarray(self.articulation.get_joint_velocities(), dtype=np.float64)
+        theta = float(np.arctan2(np.sin(q[self.dof_rod] - math.pi),
+                                 np.cos(q[self.dof_rod] - math.pi)))
+        theta_dot = float(dq[self.dof_rod])
+        phi = float(q[self.dof_arm]) if self.dof_arm is not None else float("nan")
+        phi_dot = float(dq[self.dof_arm]) if self.dof_arm is not None else float("nan")
+        upright = 1.0 if abs(theta) < 0.35 else 0.0
+        return {
+            "theta": theta, "theta_dot": theta_dot,
+            "phi": phi, "phi_dot": phi_dot, "upright": upright,
+            # exactly the vector CYBERRUNNER_PENDULUM_INTEGRATION.md specifies
+            "obs": [math.cos(theta), math.sin(theta),
+                    float(np.clip(theta_dot / 15.0, -2.0, 2.0)), upright],
+        }
+
     def board_angles_rad(self):
         q = self.articulation.get_joint_positions()
         return float(q[self.dof_alpha]), float(q[self.dof_beta])
@@ -577,12 +635,14 @@ class Board:
             beta_deg, alpha_deg = self.servo1.angle_deg, self.servo2.angle_deg
         else:
             alpha_deg, beta_deg = self.servo1.angle_deg, self.servo2.angle_deg
-        targets = np.array(self.articulation.get_joint_positions(), dtype=np.float32)
-        targets[self.dof_alpha] = math.radians(alpha_deg)
-        targets[self.dof_beta] = math.radians(beta_deg)
-        # apply_action drives toward the target through the joint's drive gains;
-        # set_joint_positions would teleport the plate and skip the servo model.
-        self.articulation.apply_action(ArticulationAction(joint_positions=targets))
+        # Command ONLY the two tilt joints. The articulation also carries the
+        # pendulum's arm and rod, and writing the full position vector told them
+        # to hold station every step -- a software clamp that froze the pendulum
+        # no matter what its drive or geometry allowed.
+        self.articulation.apply_action(ArticulationAction(
+            joint_positions=np.array([math.radians(alpha_deg), math.radians(beta_deg)],
+                                     dtype=np.float32),
+            joint_indices=np.array([self.dof_alpha, self.dof_beta], dtype=np.int32)))
 
     def advance(self):
         # Render only the substep whose frame is actually sent. Rendering every
@@ -626,8 +686,10 @@ class Board:
         start_xy = self.reset_xy()
         # Same y flip as marble_board_xy, so the marble is placed where the robot
         # places it rather than at its mirror image.
+        height = (self.rest_height if getattr(self, "rest_height", None) is not None
+                  else self.mesh_hi[1] + MARBLE_RADIUS_M)
         origin = Gf.Vec3d(float(self.mesh_lo[0] + start_xy[0]),
-                          float(self.mesh_hi[1] + MARBLE_RADIUS_M),
+                          float(height),
                           float(self.mesh_lo[2] + BOARD_HEIGHT_M - start_xy[1]))
         # The static transform, not the live one: reset runs before the physics
         # view is ready on the first call, and asking the plate for its pose then
@@ -663,6 +725,11 @@ class Board:
         else:
             reply["x_b"] = float("nan")
             reply["y_b"] = float("nan")
+        pendulum = self.pendulum_state()
+        if pendulum is not None:
+            # Extra keys, so a learner that does not know about the pendulum is
+            # unaffected: env_tcp reads the fields it wants and ignores the rest.
+            reply["pendulum"] = pendulum
         return reply
 
 
