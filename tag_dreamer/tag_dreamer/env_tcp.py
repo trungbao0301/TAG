@@ -439,11 +439,25 @@ class TagGym(gym.Env):
 
         host = os.environ.get("TAG_TCP_BIND", "0.0.0.0")
         port = int(os.environ.get("TAG_TCP_PORT", "5555"))
+        # One board per port. TAG_TCP_PORT_SPAN > 1 lets several environments run
+        # side by side -- each takes the first free port in the range -- which is
+        # what simulated boards need and the real rig never does. The default of
+        # 1 keeps the robot path exactly as it was: bind the one port, or fail.
+        span = max(1, int(os.environ.get("TAG_TCP_PORT_SPAN", "1")))
 
         print(f"[TCP ENV] Waiting for PC bridge on {host}:{port} ...")
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server.bind((host, port))
+        for offset in range(span):
+            try:
+                self.server.bind((host, port + offset))
+                port = port + offset
+                break
+            except OSError:
+                if offset == span - 1:
+                    raise
+        if span > 1:
+            print(f"[TCP ENV] This environment took port {port}")
         self.server.listen(1)
         self.sock, addr = self.server.accept()
         self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
