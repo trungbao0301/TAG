@@ -98,6 +98,30 @@ def parse_args():
                         "drawn from the same layout the learner scores against.")
     p.add_argument("--repo", default=os.path.expanduser("~/tag"),
                    help="TAG checkout, for the maze layout and path files")
+    p.add_argument("--pendulum-policy", default="",
+                   help="weights (.npz) for the rig's trained Furuta balance "
+                        "policy. Enabling it forces physics to 200 Hz, the rate "
+                        "the policy was trained and deployed at.")
+    p.add_argument("--pendulum-start-upright", type=float, default=0.0,
+                   metavar="RAD",
+                   help="place the rod this far from upright at reset, as the "
+                        "training env does (pole = pi + theta_up). The deployed "
+                        "policy is a hold policy, not a swing-up one: released "
+                        "hanging it correctly does nothing at all.")
+    p.add_argument("--pendulum-torque-sign", type=float, default=1.0,
+                   help="flip if positive motor torque turns the arm the other "
+                        "way here than in the model the policy was trained in. "
+                        "Independent of the angle convention, and just as fatal.")
+    p.add_argument("--pendulum-theta-sign", type=float, default=1.0,
+                   help="flip if the rod's joint axis runs opposite to the one "
+                        "the policy trained on (furuta_2d.xml has the pole on "
+                        "axis '-1 0 0'). A balance policy fed a mirrored angle "
+                        "pushes the wrong way and can never catch the rod.")
+    p.add_argument("--view-every", type=int, default=0,
+                   help="render one full frame every N control steps, for the "
+                        "/camera.png endpoint only. The observation is untouched, "
+                        "so watching costs a fraction of a render instead of one "
+                        "per step and the policy keeps seeing what it was seeing.")
     p.add_argument("--camera-prim", default="/World/Camera_TAG")
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=400)
@@ -366,6 +390,24 @@ class Board:
         scene = self.stage.GetPrimAtPath("/World/PhysicsScene")
         hz = scene.GetAttribute("physxScene:timeStepsPerSecond")
         self.physics_dt = 1.0 / float(hz.Get() if hz and hz.Get() else 60.0)
+        self.policy = None
+        if args.pendulum_policy:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from furuta_policy import FurutaPolicy, CONTROL_DT
+            self.policy = FurutaPolicy(args.pendulum_policy)
+            # The policy's observation encodes rates and an action history sampled
+            # every 5 ms. Running it at any other rate feeds it numbers it never
+            # saw, so the simulation moves to its clock rather than the reverse.
+            # The policy ticks at 200 Hz, but the model it was trained in steps
+            # at 1 kHz underneath -- five substeps per tick. Stepping physics at
+            # the control rate instead let the arm turn 1.6 rad in a single step
+            # under full torque, and the solver produced NaN.
+            self.policy_substeps = int(round(CONTROL_DT / 0.001))
+            print("[sim] pendulum policy at %.0f Hz over physics at 1000 Hz "
+                  "(%d substeps per tick, as in furuta_2d.xml)"
+                  % (1 / CONTROL_DT, self.policy_substeps))
+            self.physics_dt = 0.001
+            self._substep = 0
         self.control_dt = 1.0 / float(args.control_hz)
 
         self.sim = SimulationContext(physics_dt=self.physics_dt,
@@ -445,7 +487,7 @@ class Board:
                   % (self.dof_arm, self.dof_rod))
         print("[sim] dofs: %s  alpha=%d beta=%d" % (names, self.dof_alpha, self.dof_beta))
 
-        if self.args.image in ("camera", "composite"):
+        if self.args.image in ("camera", "composite") or self.args.view_every:
             from isaacsim.sensors.camera import Camera
             self.camera = Camera(prim_path=self.args.camera_prim,
                                  resolution=(self.args.width, self.args.height))
@@ -454,6 +496,12 @@ class Board:
                 self.sim.step(render=True)
         if self.args.image == "composite":
             self._build_composite_background()
+        if self.camera is not None:
+            # Put a frame in the window before anyone asks for a step, so the
+            # view endpoint shows the board while the learner is still starting
+            # instead of answering "no frame yet" for two minutes.
+            self.sim.step(render=True)
+            self._stash_camera()
         self.rest_height = None
         self.reset()
         self._calibrate_rest_height()
@@ -555,6 +603,46 @@ class Board:
             return None
         return float(x - BOARD_WIDTH_M / 2.0), float(y - BOARD_HEIGHT_M / 2.0)
 
+    def _drive_pendulum(self):
+        """One 200 Hz tick of the balance policy, if one is loaded.
+
+        Held between ticks: the policy sees the world every 5 ms and its torque
+        stays applied through the substeps, exactly as a zero-order hold on the
+        real motor would.
+        """
+        if self.policy is None or self.dof_rod is None:
+            return
+        self._substep += 1
+        if self._substep % self.policy_substeps != 1 % self.policy_substeps:
+            # between ticks: hold the last torque rather than recompute
+            if getattr(self, "last_pendulum_torque", None) is not None:
+                self.articulation.apply_action(ArticulationAction(
+                    joint_efforts=np.array([self.last_pendulum_torque], dtype=np.float32),
+                    joint_indices=np.array([self.dof_arm], dtype=np.int32)))
+            return
+        q = np.asarray(self.articulation.get_joint_positions(), dtype=np.float64)
+        dq = np.asarray(self.articulation.get_joint_velocities(), dtype=np.float64)
+        theta_up = float(np.arctan2(np.sin(q[self.dof_rod] - math.pi),
+                                    np.cos(q[self.dof_rod] - math.pi)))
+        sign = self.args.pendulum_theta_sign
+        obs = self.policy.observe(
+            theta_up=sign * theta_up,
+            theta_dot=sign * float(dq[self.dof_rod]),
+            phi=float(q[self.dof_arm]),
+            phi_dot=float(dq[self.dof_arm]),
+            # the rig's IMU reads the board's own tilt, which here is simply the
+            # state of the two joints the maze policy is driving
+            roll=float(q[self.dof_alpha]), pitch=float(q[self.dof_beta]),
+            roll_rate=float(dq[self.dof_alpha]), pitch_rate=float(dq[self.dof_beta]),
+        )
+        action = self.policy.act(obs)
+        torque = self.args.pendulum_torque_sign * self.policy.torque(action)
+        self.last_pendulum_action = action
+        self.last_pendulum_torque = torque
+        self.articulation.apply_action(ArticulationAction(
+            joint_efforts=np.array([torque], dtype=np.float32),
+            joint_indices=np.array([self.dof_arm], dtype=np.int32)))
+
     def pendulum_state(self):
         """Pendulum state in the form the integration design asks for, or None.
 
@@ -574,6 +662,8 @@ class Board:
         phi_dot = float(dq[self.dof_arm]) if self.dof_arm is not None else float("nan")
         upright = 1.0 if abs(theta) < 0.35 else 0.0
         return {
+            "action": float(getattr(self, "last_pendulum_action", 0.0)),
+            "torque": float(getattr(self, "last_pendulum_torque", 0.0)),
             "theta": theta, "theta_dot": theta_dot,
             "phi": phi, "phi_dot": phi_dot, "upright": upright,
             # exactly the vector CYBERRUNNER_PENDULUM_INTEGRATION.md specifies
@@ -639,9 +729,15 @@ class Board:
         # pendulum's arm and rod, and writing the full position vector told them
         # to hold station every step -- a software clamp that froze the pendulum
         # no matter what its drive or geometry allowed.
+        self.tilt_target = np.array([math.radians(alpha_deg), math.radians(beta_deg)],
+                                    dtype=np.float32)
+        self._push_tilt()
+
+    def _push_tilt(self):
+        if getattr(self, "tilt_target", None) is None:
+            return
         self.articulation.apply_action(ArticulationAction(
-            joint_positions=np.array([math.radians(alpha_deg), math.radians(beta_deg)],
-                                     dtype=np.float32),
+            joint_positions=self.tilt_target,
             joint_indices=np.array([self.dof_alpha, self.dof_beta], dtype=np.int32)))
 
     def advance(self):
@@ -653,8 +749,16 @@ class Board:
         # camera object around purely to project the marble onto its one-off
         # backdrop, and rendering for it threw away the whole point.
         render = self.args.image == "camera"
+        # A view frame is for the human, not the policy: render it on its own
+        # schedule and keep it out of the observation.
+        view = (self.args.view_every > 0 and self.camera is not None
+                and self.total_steps % self.args.view_every == 0)
         for i in range(steps):
-            self.sim.step(render=render and i == steps - 1)
+            self._push_tilt()
+            self._drive_pendulum()
+            self.sim.step(render=(render or view) and i == steps - 1)
+        if view and not render:
+            self._stash_camera()
 
     def reset_xy(self):
         """Where to put the marble this episode, in lower-left board metres.
@@ -683,6 +787,24 @@ class Board:
         self.servo1.home()
         self.servo2.home()
         self.apply(0.0, 0.0)
+        if self.policy is not None:
+            self.policy.reset()
+        if self.args.pendulum_start_upright is not None and self.dof_rod is not None:
+            q = np.asarray(self.articulation.get_joint_positions(), dtype=np.float32)
+            q[self.dof_rod] = math.pi + float(self.args.pendulum_start_upright)
+            q[self.dof_arm] = 0.0
+            self.articulation.set_joint_positions(q)
+            self.articulation.set_joint_velocities(np.zeros_like(q))
+            # Read it back. A reset that quietly fails leaves the rod hanging,
+            # the policy sees a state it has no answer for, and every later
+            # measurement is about a situation that never happened.
+            back = np.asarray(self.articulation.get_joint_positions(), dtype=np.float64)
+            placed = math.degrees(math.atan2(math.sin(back[self.dof_rod] - math.pi),
+                                             math.cos(back[self.dof_rod] - math.pi)))
+            if abs(placed) > 5.0:
+                print("[sim] WARNING: asked for the rod upright, it reads %+.1f deg" % placed)
+            elif self.reset_count < 2:
+                print("[sim] rod placed %+.2f deg from upright" % placed)
         start_xy = self.reset_xy()
         # Same y flip as marble_board_xy, so the marble is placed where the robot
         # places it rather than at its mirror image.
@@ -700,6 +822,11 @@ class Board:
         self.marble.set_linear_velocity(np.zeros(3, dtype=np.float32))
         self.marble.set_angular_velocity(np.zeros(3, dtype=np.float32))
         for _ in range(int(0.2 / self.physics_dt)):
+            # Drive the pendulum through the settle too. An inverted rod diverges
+            # with a ~70 ms time constant, so 0.2 s of free fall turns a 3 degree
+            # release into a 46 degree one -- far outside what a hold policy can
+            # catch, and it looks exactly like the policy failing.
+            self._drive_pendulum()
             self.sim.step(render=False)
 
     def observation(self):
