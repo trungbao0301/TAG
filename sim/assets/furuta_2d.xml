@@ -1,0 +1,111 @@
+<!-- Two-axis board concept: nested roll/pitch gimbal carrying the validated Furuta rig. -->
+<mujoco model="furuta_2d_board">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.001" integrator="RK4" gravity="0 0 -9.81"/>
+
+  <visual>
+    <headlight diffuse="0.7 0.7 0.7" ambient="0.35 0.35 0.35"/>
+  </visual>
+
+  <asset>
+    <texture name="sky" type="skybox" builtin="gradient" rgb1=".55 .65 .75"
+             rgb2=".08 .10 .15" width="256" height="256"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1=".22 .28 .34"
+             rgb2=".12 .16 .20" width="300" height="300"/>
+    <material name="grid" texture="grid" texrepeat="10 10" reflectance="0.1"/>
+    <material name="boardmat" rgba=".78 .57 .30 1"/>
+    <material name="rollmat" rgba=".90 .20 .16 1"/>
+    <material name="pitchmat" rgba=".15 .78 .36 1"/>
+  </asset>
+
+  <default>
+    <geom contype="0" conaffinity="0"/>
+  </default>
+
+  <worldbody>
+    <light pos=".6 .4 1.4" dir="-.4 -.3 -1"/>
+    <geom name="floor" type="plane" size=".8 .8 .05" pos="0 0 -.18" material="grid"/>
+
+    <!-- Fixed pedestal and bearing towers. -->
+    <geom name="base_plate" type="box" size=".31 .25 .012" pos="0 0 -.165"
+          rgba=".22 .24 .28 1"/>
+    <geom type="box" size=".018 .22 .13" pos="-.27 0 -.04" rgba=".32 .35 .40 1"/>
+    <geom type="box" size=".018 .22 .13" pos=".27 0 -.04" rgba=".32 .35 .40 1"/>
+    <!-- Fixed roll-bearing housings carried by the two support towers. -->
+    <geom type="cylinder" fromto="-.300 0 .05 -.250 0 .05" size=".015"
+          rgba=".12 .13 .15 1"/>
+    <geom type="cylinder" fromto=".250 0 .05 .300 0 .05" size=".015"
+          rgba=".12 .13 .15 1"/>
+
+    <!-- OUTER GIMBAL: rolls about world X (red axle). -->
+    <body name="roll_frame" pos="0 0 .05">
+      <joint name="board_roll" type="hinge" axis="1 0 0" range="-.26179939 .26179939"
+             damping="1.5" armature=".01"/>
+      <inertial pos="0 0 0" mass=".50" diaginertia=".010 .010 .018"/>
+      <!-- Split roll axle stubs: no fictitious shaft passes through the board. -->
+      <geom name="roll_axle_left" type="cylinder" fromto="-.275 0 0 -.235 0 0"
+            size=".006" material="rollmat"/>
+      <geom name="roll_axle_right" type="cylinder" fromto=".235 0 0 .275 0 0"
+            size=".006" material="rollmat"/>
+      <geom name="roll_frame_left" type="capsule" fromto="-.24 -.20 0 -.24 .20 0"
+            size=".009" material="rollmat" contype="1" conaffinity="1"/>
+      <geom name="roll_frame_right" type="capsule" fromto=".24 -.20 0 .24 .20 0"
+            size=".009" material="rollmat" contype="1" conaffinity="1"/>
+      <geom name="roll_frame_front" type="capsule" fromto="-.24 -.20 0 .24 -.20 0"
+            size=".009" material="rollmat" contype="1" conaffinity="1"/>
+      <geom name="roll_frame_back" type="capsule" fromto="-.24 .20 0 .24 .20 0"
+            size=".009" material="rollmat" contype="1" conaffinity="1"/>
+      <!-- Pitch-bearing housings are fixed to the outer roll frame. -->
+      <geom name="pitch_bearing_front" type="cylinder" fromto="0 -.218 0 0 -.178 0"
+            size=".015" rgba=".12 .13 .15 1"/>
+      <geom name="pitch_bearing_back" type="cylinder" fromto="0 .178 0 0 .218 0"
+            size=".015" rgba=".12 .13 .15 1"/>
+
+      <!-- INNER GIMBAL: pitches about the roll frame's local Y (green axle). -->
+      <body name="pitch_frame">
+        <joint name="board_pitch" type="hinge" axis="0 1 0" range="-.26179939 .26179939"
+               damping="1.2" armature=".008"/>
+        <inertial pos="0 0 .025" mass=".65" diaginertia=".012 .012 .020"/>
+        <geom name="pitch_axis" type="cylinder" fromto="0 -.205 0 0 .205 0"
+              size=".006" material="pitchmat"/>
+
+        <!-- The moving board and complete Furuta assembly. -->
+        <geom name="board_plate" type="box" size=".13 .11 .008" pos="0 0 .016"
+              material="boardmat" contype="1" conaffinity="1"/>
+        <geom type="box" size=".004 .105 .003" pos=".08 0 .025" rgba=".95 .88 .68 1"/>
+        <geom type="box" size=".125 .004 .003" pos="0 -.065 .025" rgba=".95 .88 .68 1"/>
+        <geom type="cylinder" size=".018 .055" pos="0 0 .078" rgba=".25 .27 .30 1"/>
+
+        <body name="arm" pos="0 0 .133">
+          <joint name="arm" type="hinge" axis="0 0 1" damping="9.4e-4"
+                 frictionloss="6.0e-3"/>
+          <inertial pos="0 0 0" mass=".015" diaginertia="6.84e-5 6.84e-5 6.84e-5"/>
+          <geom type="capsule" fromto="0 0 0 .035 0 0" size=".004" rgba=".2 .45 .85 1"/>
+
+          <body name="pole" pos=".035 0 0">
+            <joint name="pole" type="hinge" axis="-1 0 0" damping="3.41989e-5"
+                   frictionloss="1.64973e-4"/>
+            <inertial pos="0 0 -.0375" mass=".027"
+                      diaginertia="8.4e-6 8.4e-6 1e-7"/>
+            <geom type="capsule" fromto="0 0 0 0 0 -.075" size=".003" rgba=".85 .3 .2 1"/>
+            <site name="tip" pos="0 0 -.075" size=".005"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- Explicit pairs make board/frame interference visible despite their parent-child relation. -->
+  <contact>
+    <pair geom1="board_plate" geom2="roll_frame_left"/>
+    <pair geom1="board_plate" geom2="roll_frame_right"/>
+    <pair geom1="board_plate" geom2="roll_frame_front"/>
+    <pair geom1="board_plate" geom2="roll_frame_back"/>
+  </contact>
+
+  <actuator>
+    <motor name="motor" joint="arm" gear=".0127" ctrlrange="-6 6"/>
+    <position name="roll_servo" joint="board_roll" kp="80" ctrlrange="-.26179939 .26179939"/>
+    <position name="pitch_servo" joint="board_pitch" kp="80" ctrlrange="-.26179939 .26179939"/>
+  </actuator>
+</mujoco>

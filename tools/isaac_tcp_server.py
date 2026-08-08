@@ -98,6 +98,14 @@ def parse_args():
                         "drawn from the same layout the learner scores against.")
     p.add_argument("--repo", default=os.path.expanduser("~/tag"),
                    help="TAG checkout, for the maze layout and path files")
+    p.add_argument("--pendulum-backend", choices=("physx", "mujoco"), default="mujoco",
+                   help="where the pendulum is simulated. 'mujoco' runs it in the "
+                        "model its policy was trained in, driven by the plate "
+                        "angles Isaac reports -- PhysX ignores authored inertia "
+                        "and armature on articulation links, so the arm there "
+                        "runs at a quarter of its real inertia.")
+    p.add_argument("--pendulum-model", default="",
+                   help="furuta_2d.xml, for the mujoco backend")
     p.add_argument("--pendulum-policy", default="",
                    help="weights (.npz) for the rig's trained Furuta balance "
                         "policy. Enabling it forces physics to 200 Hz, the rate "
@@ -257,6 +265,15 @@ class Overlay:
             cv2.circle(img, centre, max(3, int(MARBLE_RADIUS_M * PX_PER_M)), (255, 255, 255), 1)
         lines = [
             "step %d   episode steps %d" % (st.get("total", 0), st.get("steps", 0)),
+        ]
+        if st.get("pendulum"):
+            p = st["pendulum"]
+            lines.append("rod %+7.1f deg from upright   %s   arm %+6.2f rad"
+                         % (math.degrees(p["theta"]),
+                            "UPRIGHT" if p["upright"] else "fallen", p["phi"]))
+            lines.append("policy action %+6.3f   torque %+8.5f N.m"
+                         % (p["action"], p["torque"]))
+        lines += [
             "ball %s   x %.1f mm  y %.1f mm" % (
                 "seen" if st.get("ball") else "LOST",
                 1000 * st.get("x", float("nan")), 1000 * st.get("y", float("nan"))),
@@ -391,7 +408,13 @@ class Board:
         hz = scene.GetAttribute("physxScene:timeStepsPerSecond")
         self.physics_dt = 1.0 / float(hz.Get() if hz and hz.Get() else 60.0)
         self.policy = None
-        if args.pendulum_policy:
+        self.mj_pendulum = None
+        if args.pendulum_policy and args.pendulum_backend == "mujoco":
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from furuta_policy import MujocoFuruta
+            self.mj_pendulum = MujocoFuruta(args.pendulum_model, args.pendulum_policy)
+            print("[sim] pendulum runs in MuJoCo, fed the plate angles from Isaac")
+        elif args.pendulum_policy:
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             from furuta_policy import FurutaPolicy, CONTROL_DT
             self.policy = FurutaPolicy(args.pendulum_policy)
@@ -477,13 +500,29 @@ class Board:
                 self.dof_beta = i
         if self.dof_alpha is None or self.dof_beta is None:
             raise SystemExit("could not find the two tilt joints in %s" % names)
-        # The Furuta pendulum, when the board carries one, shares this
-        # articulation: arm about Z, rod hanging from the arm.
+        # The pendulum may be part of this articulation (older assets) or its
+        # own -- a 15 g chain shares a solve badly with a 650 g plate, so the
+        # asset now roots it separately and joins the two with a fixed joint
+        # outside either articulation.
+        self.pend_art = self.articulation
         self.dof_arm = next((i for i, n in enumerate(names) if "RotaryArm" in n
                              and "Rod" not in n), None)
         self.dof_rod = next((i for i, n in enumerate(names) if "PendulumRod" in n), None)
-        if self.dof_rod is not None:
-            print("[sim] pendulum present: arm dof=%s rod dof=%s"
+        if self.dof_rod is None:
+            try:
+                art = SingleArticulation("/World/TAG/FurutaPendulum/PendulumBase")
+                art.initialize()
+                pnames = list(art.dof_names)
+                arm = next((i for i, n in enumerate(pnames) if "RotaryArm" in n
+                            and "Rod" not in n), None)
+                rod = next((i for i, n in enumerate(pnames) if "PendulumRod" in n), None)
+                if rod is not None:
+                    self.pend_art, self.dof_arm, self.dof_rod = art, arm, rod
+                    print("[sim] pendulum is its own articulation: %s" % pnames)
+            except Exception as exc:
+                print("[sim] no separate pendulum articulation (%s)" % exc)
+        if self.dof_rod is not None and self.pend_art is self.articulation:
+            print("[sim] pendulum shares the board articulation: arm dof=%s rod dof=%s"
                   % (self.dof_arm, self.dof_rod))
         print("[sim] dofs: %s  alpha=%d beta=%d" % (names, self.dof_alpha, self.dof_beta))
 
@@ -616,12 +655,14 @@ class Board:
         if self._substep % self.policy_substeps != 1 % self.policy_substeps:
             # between ticks: hold the last torque rather than recompute
             if getattr(self, "last_pendulum_torque", None) is not None:
-                self.articulation.apply_action(ArticulationAction(
+                self.pend_art.apply_action(ArticulationAction(
                     joint_efforts=np.array([self.last_pendulum_torque], dtype=np.float32),
                     joint_indices=np.array([self.dof_arm], dtype=np.int32)))
             return
-        q = np.asarray(self.articulation.get_joint_positions(), dtype=np.float64)
-        dq = np.asarray(self.articulation.get_joint_velocities(), dtype=np.float64)
+        q = np.asarray(self.pend_art.get_joint_positions(), dtype=np.float64)
+        dq = np.asarray(self.pend_art.get_joint_velocities(), dtype=np.float64)
+        board_q = np.asarray(self.articulation.get_joint_positions(), dtype=np.float64)
+        board_dq = np.asarray(self.articulation.get_joint_velocities(), dtype=np.float64)
         theta_up = float(np.arctan2(np.sin(q[self.dof_rod] - math.pi),
                                     np.cos(q[self.dof_rod] - math.pi)))
         sign = self.args.pendulum_theta_sign
@@ -632,18 +673,20 @@ class Board:
             phi_dot=float(dq[self.dof_arm]),
             # the rig's IMU reads the board's own tilt, which here is simply the
             # state of the two joints the maze policy is driving
-            roll=float(q[self.dof_alpha]), pitch=float(q[self.dof_beta]),
-            roll_rate=float(dq[self.dof_alpha]), pitch_rate=float(dq[self.dof_beta]),
+            roll=float(board_q[self.dof_alpha]), pitch=float(board_q[self.dof_beta]),
+            roll_rate=float(board_dq[self.dof_alpha]), pitch_rate=float(board_dq[self.dof_beta]),
         )
         action = self.policy.act(obs)
         torque = self.args.pendulum_torque_sign * self.policy.torque(action)
         self.last_pendulum_action = action
         self.last_pendulum_torque = torque
-        self.articulation.apply_action(ArticulationAction(
+        self.pend_art.apply_action(ArticulationAction(
             joint_efforts=np.array([torque], dtype=np.float32),
             joint_indices=np.array([self.dof_arm], dtype=np.int32)))
 
     def pendulum_state(self):
+        if self.mj_pendulum is not None:
+            return self.mj_pendulum.state()
         """Pendulum state in the form the integration design asks for, or None.
 
         Angles come straight from the articulation. In this asset the rod is
@@ -653,8 +696,8 @@ class Board:
         """
         if self.dof_rod is None:
             return None
-        q = np.asarray(self.articulation.get_joint_positions(), dtype=np.float64)
-        dq = np.asarray(self.articulation.get_joint_velocities(), dtype=np.float64)
+        q = np.asarray(self.pend_art.get_joint_positions(), dtype=np.float64)
+        dq = np.asarray(self.pend_art.get_joint_velocities(), dtype=np.float64)
         theta = float(np.arctan2(np.sin(q[self.dof_rod] - math.pi),
                                  np.cos(q[self.dof_rod] - math.pi)))
         theta_dot = float(dq[self.dof_rod])
@@ -757,6 +800,9 @@ class Board:
             self._push_tilt()
             self._drive_pendulum()
             self.sim.step(render=(render or view) and i == steps - 1)
+        if self.mj_pendulum is not None:
+            alpha, beta = self.board_angles_rad()
+            self.mj_pendulum.step(alpha, beta, self.control_dt)
         if view and not render:
             self._stash_camera()
 
@@ -789,16 +835,18 @@ class Board:
         self.apply(0.0, 0.0)
         if self.policy is not None:
             self.policy.reset()
+        if self.mj_pendulum is not None:
+            self.mj_pendulum.reset(float(self.args.pendulum_start_upright or 0.0))
         if self.args.pendulum_start_upright is not None and self.dof_rod is not None:
-            q = np.asarray(self.articulation.get_joint_positions(), dtype=np.float32)
+            q = np.asarray(self.pend_art.get_joint_positions(), dtype=np.float32)
             q[self.dof_rod] = math.pi + float(self.args.pendulum_start_upright)
             q[self.dof_arm] = 0.0
-            self.articulation.set_joint_positions(q)
-            self.articulation.set_joint_velocities(np.zeros_like(q))
+            self.pend_art.set_joint_positions(q)
+            self.pend_art.set_joint_velocities(np.zeros_like(q))
             # Read it back. A reset that quietly fails leaves the rod hanging,
             # the policy sees a state it has no answer for, and every later
             # measurement is about a situation that never happened.
-            back = np.asarray(self.articulation.get_joint_positions(), dtype=np.float64)
+            back = np.asarray(self.pend_art.get_joint_positions(), dtype=np.float64)
             placed = math.degrees(math.atan2(math.sin(back[self.dof_rod] - math.pi),
                                              math.cos(back[self.dof_rod] - math.pi)))
             if abs(placed) > 5.0:
@@ -833,12 +881,14 @@ class Board:
         alpha, beta = self.board_angles_rad()
         xy = self.marble_board_xy()
         image = self.gray64()
+        pendulum = self.pendulum_state()
         if self.overlay is not None:
             self.overlay.state = {
                 "x": (xy[0] + BOARD_WIDTH_M / 2.0) if xy else float("nan"),
                 "y": (xy[1] + BOARD_HEIGHT_M / 2.0) if xy else float("nan"),
                 "alpha": alpha, "beta": beta, "ball": xy is not None,
                 "steps": self.episode_steps, "total": self.total_steps,
+                "pendulum": pendulum,
             }
         reply = {
             "ok": True,
@@ -852,7 +902,6 @@ class Board:
         else:
             reply["x_b"] = float("nan")
             reply["y_b"] = float("nan")
-        pendulum = self.pendulum_state()
         if pendulum is not None:
             # Extra keys, so a learner that does not know about the pendulum is
             # unaffected: env_tcp reads the fields it wants and ignores the rest.

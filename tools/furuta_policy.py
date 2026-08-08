@@ -82,3 +82,82 @@ class FurutaPolicy:
     def torque(action):
         """Volts through the motor's gear, which is what MuJoCo applied."""
         return float(np.clip(action, -1.0, 1.0)) * V_MAX * GEAR
+
+
+class MujocoFuruta:
+    """The pendulum, simulated in the model its policy was trained in.
+
+    PhysX would not reproduce this mechanism: authored inertia and joint armature
+    are both ignored for articulation links, so a 15 g arm ran with a quarter of
+    its real inertia and hit an effective terminal velocity no torque could pass.
+    Rather than keep bending the solver, run the pendulum where it is already
+    known to be right and let Isaac do the board, the marble and the camera.
+
+    The plate's tilt crosses over as the two board angles, exactly the input the
+    training environment drove with. The reaction the pendulum exerts back on the
+    plate is not returned: 110 g of pendulum against a 650 g plate held by two
+    position-controlled servos moves the board very little, and the maze policy
+    already treats the board as a commanded system rather than a free one.
+    """
+
+    def __init__(self, model_path, weights_path):
+        import mujoco
+        self.mj = mujoco
+        self.model = mujoco.MjModel.from_xml_path(model_path)
+        self.data = mujoco.MjData(self.model)
+        jid = lambda n: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, n)
+        self.qp = self.model.jnt_qposadr[jid("pole")]
+        self.qa = self.model.jnt_qposadr[jid("arm")]
+        self.dp = self.model.jnt_dofadr[jid("pole")]
+        self.da = self.model.jnt_dofadr[jid("arm")]
+        aid = lambda n: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, n)
+        self.motor = aid("motor")
+        self.roll_servo = aid("roll_servo")
+        self.pitch_servo = aid("pitch_servo")
+        self.jid_roll = jid("board_roll")
+        self.jid_pitch = jid("board_pitch")
+        self.substeps = max(1, int(round(CONTROL_DT / self.model.opt.timestep)))
+        self.policy = FurutaPolicy(weights_path)
+        self.reset()
+
+    def reset(self, theta_up=0.0):
+        self.mj.mj_resetData(self.model, self.data)
+        self.data.qpos[self.qp] = np.pi + theta_up
+        self.data.qpos[self.qa] = 0.0
+        self.mj.mj_forward(self.model, self.data)
+        self.policy.reset()
+
+    def step(self, roll, pitch, seconds):
+        """Advance by `seconds`, holding the plate at the angles Isaac reports."""
+        limit = float(self.model.actuator_ctrlrange[self.roll_servo][1])
+        self.data.ctrl[self.roll_servo] = float(np.clip(roll, -limit, limit))
+        self.data.ctrl[self.pitch_servo] = float(np.clip(pitch, -limit, limit))
+        ticks = max(1, int(round(seconds / CONTROL_DT)))
+        for _ in range(ticks):
+            th_up = self.data.qpos[self.qp] - np.pi
+            obs = self.policy.observe(
+                theta_up=th_up, theta_dot=self.data.qvel[self.dp],
+                phi=self.data.qpos[self.qa], phi_dot=self.data.qvel[self.da],
+                roll=self.data.qpos[self.model.jnt_qposadr[self.jid_roll]],
+                pitch=self.data.qpos[self.model.jnt_qposadr[self.jid_pitch]],
+                roll_rate=self.data.qvel[self.model.jnt_dofadr[self.jid_roll]],
+                pitch_rate=self.data.qvel[self.model.jnt_dofadr[self.jid_pitch]],
+            )
+            self.data.ctrl[self.motor] = self.policy.act(obs) * V_MAX
+            for _ in range(self.substeps):
+                self.mj.mj_step(self.model, self.data)
+
+    def state(self):
+        th = self.data.qpos[self.qp] - np.pi
+        theta = float(np.arctan2(np.sin(th), np.cos(th)))
+        theta_dot = float(self.data.qvel[self.dp])
+        upright = 1.0 if abs(theta) < 0.35 else 0.0
+        return {
+            "theta": theta, "theta_dot": theta_dot,
+            "phi": float(self.data.qpos[self.qa]), "phi_dot": float(self.data.qvel[self.da]),
+            "upright": upright,
+            "action": float(self.policy.prev_action),
+            "torque": float(self.policy.prev_action * V_MAX * GEAR),
+            "obs": [np.cos(theta), np.sin(theta),
+                    float(np.clip(theta_dot / 15.0, -2.0, 2.0)), upright],
+        }
