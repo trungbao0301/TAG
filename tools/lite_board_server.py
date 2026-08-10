@@ -98,6 +98,7 @@ class BallPlateSim:
         self.episode_steps = 0
         self.servo1 = None
         self.servo2 = None
+        self.last_state = None
         self.reset()
 
     def _sample_params(self):
@@ -170,6 +171,10 @@ class BallPlateSim:
         noisy = reported + self.rng.normal(0.0, self.params["position_noise_m"], size=2)
         ball = bool(self.rng.uniform() >= self.params["dropout_prob"])
         image = self._render(true_pos if ball else None)
+        self.last_state = {
+            "ball": ball, "alpha": alpha, "beta": beta,
+            "pos": true_pos.copy(), "step": self.total_steps,
+        }
         reply = {
             "ok": True,
             "ball": ball,
@@ -195,6 +200,57 @@ class BallPlateSim:
         mask = (xx - u) ** 2 + (yy - v) ** 2 <= r_px ** 2
         frame[mask] = 255
         return frame.reshape(64, 64, 1)
+
+
+def start_overlay_server(sim, port):
+    """Serve the same live-view page draw_path_server.py expects at
+    /frame.png -- isaac_tcp_server.py's --overlay-port equivalent, so either
+    physics backend plugs into the same drawing UI unmodified."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+
+    import cv2
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def do_GET(self):
+            if not self.path.startswith("/frame.png"):
+                self.send_error(404)
+                return
+            scale = 6
+            st = sim.last_state
+            frame = np.zeros((64, 64), dtype=np.uint8) if st is None else sim._render(
+                st["pos"] if st["ball"] else None
+            ).reshape(64, 64)
+            img = cv2.resize(frame, (64 * scale, 64 * scale), interpolation=cv2.INTER_NEAREST)
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+            lines = ["step %d" % (st["step"] if st else 0)]
+            if st is not None:
+                lines += [
+                    "ball %s" % ("seen" if st["ball"] else "LOST"),
+                    "alpha %+.2f deg  beta %+.2f deg"
+                    % (math.degrees(st["alpha"]), math.degrees(st["beta"])),
+                ]
+            for i, text in enumerate(lines):
+                cv2.putText(img, text, (6, 16 + 16 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
+                            (230, 230, 230), 1, cv2.LINE_AA)
+            ok, buf = cv2.imencode(".png", img)
+            if not ok:
+                self.send_error(500)
+                return
+            body = buf.tobytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    print("[lite] overlay on http://0.0.0.0:%d/frame.png" % port)
 
 
 def recv_line(sock, buffer):
@@ -299,6 +355,12 @@ def parse_args():
                          "modelling detector dropout -- sim/README.md notes "
                          "this is entirely unmodelled in Isaac today")
     p.add_argument("--dropout-hi", type=float, default=0.03)
+    p.add_argument("--overlay-port", type=int, default=0,
+                    help="serve a live view at http://host:PORT/frame.png "
+                         "(0 = off) -- the same endpoint "
+                         "isaac_tcp_server.py's --overlay-port serves, so "
+                         "tools/draw_path_server.py's --overlay-url works "
+                         "unmodified against either backend.")
     return p.parse_args()
 
 
@@ -307,6 +369,8 @@ def main():
     sim = BallPlateSim(args)
     print("[lite] control_dt=%.4f substeps=%d axis_map=%s"
           % (sim.control_dt, sim.physics_substeps, args.axis_map))
+    if args.overlay_port:
+        start_overlay_server(sim, args.overlay_port)
     try:
         serve(sim, args)
     except KeyboardInterrupt:
