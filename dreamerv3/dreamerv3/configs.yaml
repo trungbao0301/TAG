@@ -117,6 +117,27 @@ tag:
   decoder: {mlp_keys: 'states|goal$', cnn_keys: 'image'}
   wrapper: {length: 3000}
 
+# Bare ball-on-plate, no fixed maze: a fresh random path every episode (see
+# tag_dreamer/random_path.py), driven by tools/lite_board_server.py's
+# domain-randomized physics instead of Isaac or the robot. Phase 0 of training
+# one policy across many maps -- see docs/assets/paper/main.tex's
+# "Generalization Across Maze Configurations" future work.
+tag_ballplate:
+  task: gym_tag_dreamer:tag-ballplate-v0
+  envs.amount: 1
+  replay: tag
+  jax:
+    logical_cpus: 8
+  run:
+    script: train
+    train_ratio: 128
+    actor_batch: 1
+    save_every: 10
+    log_keys_sum: '^log_reward$'
+  encoder: {mlp_keys: 'states|goal$', cnn_keys: 'image'}
+  decoder: {mlp_keys: 'states|goal$', cnn_keys: 'image'}
+  wrapper: {length: 1500}
+
 minecraft:
 
   task: minecraft_diamond
