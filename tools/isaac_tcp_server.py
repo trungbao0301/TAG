@@ -34,6 +34,7 @@ import math
 import socket
 import sys
 import time
+import traceback
 
 # --- Hiwonder command chain (tag_hiwonder/scripts/hiwonder_compat_node.py) ---
 HOME_POS = 500.0
@@ -113,9 +114,33 @@ def parse_args():
     p.add_argument("--pendulum-start-upright", type=float, default=0.0,
                    metavar="RAD",
                    help="place the rod this far from upright at reset, as the "
-                        "training env does (pole = pi + theta_up). The deployed "
-                        "policy is a hold policy, not a swing-up one: released "
-                        "hanging it correctly does nothing at all.")
+                        "training env does (pole = pi + theta_up). Zero releases "
+                        "it hanging, which is fine: the policy trained with "
+                        "init_angle_max = pi and swings up from there in ~0.4 s.")
+    p.add_argument("--pendulum-reaction", type=int, default=1,
+                   help="feed the pendulum's reaction torque back onto the "
+                        "board's two tilt joints. Off, the rod is a decoration "
+                        "that cannot touch the marble; on, the marble feels it "
+                        "and the maze policy has to live with the disturbance.")
+    p.add_argument("--board-stiffness", type=float, default=-1.0,
+                   help="override the two tilt drives' stiffness. Negative "
+                        "leaves the asset alone. The units are whatever the "
+                        "articulation controller uses, so calibrate by applying "
+                        "a known torque and measuring the droop rather than "
+                        "trusting a number read off a datasheet.")
+    p.add_argument("--board-probe-torque", type=float, default=0.0,
+                   metavar="N_M",
+                   help="hold this constant torque on the alpha tilt joint. "
+                        "Droop divided by torque is the drive's real stiffness "
+                        "in N.m/rad, which is the only way to know what the "
+                        "controller's stiffness number actually means.")
+    p.add_argument("--board-damping", type=float, default=-1.0,
+                   help="damping to go with --board-stiffness. A soft drive "
+                        "with the asset's original damping rings.")
+    p.add_argument("--pendulum-reaction-scale", type=float, default=1.0,
+                   help="scale that reaction. The plate's drive stiffness here "
+                        "is not calibrated against the real servos, so this is "
+                        "the knob for matching a measured deflection.")
     p.add_argument("--pendulum-torque-sign", type=float, default=1.0,
                    help="flip if positive motor torque turns the arm the other "
                         "way here than in the model the policy was trained in. "
@@ -334,7 +359,15 @@ def start_overlay_server(overlay, port, board=None):
                 self.end_headers()
                 self.wfile.write(_PAGE)
 
-    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    # A viewer is a convenience; training is not. If the port is still held by a
+    # sim that has not finished dying, warn and carry on -- this killed a run
+    # once, at startup, for nothing.
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    except OSError as exc:
+        print("[sim] overlay port %d unavailable (%s); running without a viewer"
+              % (port, exc))
+        return
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print("[sim] overlay on http://0.0.0.0:%d" % port)
 
@@ -469,6 +502,12 @@ class Board:
         self.dof_rod = None
         self.episode_steps = 0
         self.total_steps = 0
+        # How well the pendulum holds while the board works the marble. Without
+        # this the only evidence is a rod that looks short from a top-down camera.
+        self.pend_hits = 0
+        self.pend_samples = 0
+        self.pend_worst = 0.0
+        self.reaction_torque = None
         self.last_camera = None
         self.reset_count = 0
         self.path_xy = None
@@ -525,6 +564,26 @@ class Board:
             print("[sim] pendulum shares the board articulation: arm dof=%s rod dof=%s"
                   % (self.dof_arm, self.dof_rod))
         print("[sim] dofs: %s  alpha=%d beta=%d" % (names, self.dof_alpha, self.dof_beta))
+
+        # The plate here is held far more rigidly than two hobby serial servos
+        # hold the real one, and a rigid plate cannot be disturbed: measured, the
+        # pendulum's reaction moved it 0.00002 deg. Softening the two tilt drives
+        # is what lets that reaction reach the marble at all.
+        ctrl = self.articulation.get_articulation_controller()
+        kp, kd = ctrl.get_gains()
+        idx = [self.dof_alpha, self.dof_beta]
+        print("[sim] board drives as authored: stiffness %s damping %s"
+              % ([float(kp[i]) for i in idx], [float(kd[i]) for i in idx]))
+        if self.args.board_stiffness >= 0.0:
+            kp = np.asarray(kp, dtype=np.float32).copy()
+            kd = np.asarray(kd, dtype=np.float32).copy()
+            for i in idx:
+                kp[i] = self.args.board_stiffness
+                if self.args.board_damping >= 0.0:
+                    kd[i] = self.args.board_damping
+            ctrl.set_gains(kps=kp, kds=kd)
+            print("[sim] board drives softened to: stiffness %s damping %s"
+                  % ([float(kp[i]) for i in idx], [float(kd[i]) for i in idx]))
 
         if self.args.image in ("camera", "composite") or self.args.view_every:
             from isaacsim.sensors.camera import Camera
@@ -779,8 +838,19 @@ class Board:
     def _push_tilt(self):
         if getattr(self, "tilt_target", None) is None:
             return
+        efforts = None
+        if self.args.board_probe_torque:
+            efforts = np.array([self.args.board_probe_torque, 0.0], dtype=np.float32)
+        elif self.reaction_torque is not None:
+            # The pendulum pushes back on the plate it stands on. Isaac drives
+            # that pendulum kinematically, so this is the only path by which the
+            # rod's motion can reach the marble. It rides on the same two joints
+            # the servos hold, so what actually deflects is set by their drive
+            # stiffness, not by this number alone.
+            efforts = np.asarray(self.reaction_torque, dtype=np.float32)
         self.articulation.apply_action(ArticulationAction(
             joint_positions=self.tilt_target,
+            joint_efforts=efforts,
             joint_indices=np.array([self.dof_alpha, self.dof_beta], dtype=np.int32)))
 
     def advance(self):
@@ -803,8 +873,36 @@ class Board:
         if self.mj_pendulum is not None:
             alpha, beta = self.board_angles_rad()
             self.mj_pendulum.step(alpha, beta, self.control_dt)
-        if view and not render:
-            self._stash_camera()
+            if self.args.pendulum_reaction:
+                # Read after stepping, so the plate feels it one control step
+                # later. At 33 ms against a rod that leans over tenths of a
+                # second, that lag is smaller than the effect it carries.
+                r, p = self.mj_pendulum.reaction()
+                s = self.args.pendulum_reaction_scale
+                self.reaction_torque = (r * s, p * s)
+            st = self.mj_pendulum.state()
+            self.pend_samples += 1
+            self.pend_hits += int(st["upright"])
+            self.pend_worst = max(self.pend_worst, abs(math.degrees(st["theta"])))
+            self._mirror_pendulum()
+
+    def _mirror_pendulum(self):
+        """Show in Isaac what MuJoCo is actually doing.
+
+        The pendulum that balances lives in MuJoCo; the one in the USD is there
+        to be looked at. Without this the render shows a rod hanging dead while
+        the real one is holding itself upright -- which is exactly as confusing
+        as it sounds.
+        """
+        if self.dof_rod is None or self.mj_pendulum is None:
+            return
+        st = self.mj_pendulum.state()
+        q = np.asarray(self.pend_art.get_joint_positions(), dtype=np.float32)
+        q[self.dof_rod] = math.pi + st["theta"]     # joint zero is hanging here
+        if self.dof_arm is not None:
+            q[self.dof_arm] = st["phi"]
+        self.pend_art.set_joint_positions(q)
+        self.pend_art.set_joint_velocities(np.zeros_like(q))
 
     def reset_xy(self):
         """Where to put the marble this episode, in lower-left board metres.
@@ -828,6 +926,58 @@ class Board:
         index = int(np.searchsorted(self.path_cum, frac * self.path_cum[-1]))
         point = self.path_xy[min(index, len(self.path_xy) - 1)]
         return float(point[0]), float(point[1])
+
+    def wall_segments(self):
+        """Every wall as a segment, in lower-left board metres."""
+        if getattr(self, "_wall_segs", None) is not None:
+            return self._wall_segs
+        segs = []
+        layout = getattr(self.overlay, "layout", None) if self.overlay else None
+        if layout:
+            for x1, x2, y in np.asarray(layout["walls_h"], dtype=float):
+                segs.append(((x1, y), (x2, y)))
+            for y1, y2, x in np.asarray(layout["walls_v"], dtype=float):
+                segs.append(((x, y1), (x, y2)))
+            for s in np.asarray(layout.get("walls_angled", []), dtype=float):
+                segs.append(((s[0], s[1]), (s[2], s[3])))
+        self._wall_segs = [(np.asarray(a), np.asarray(b)) for a, b in segs]
+        return self._wall_segs
+
+    def clear_of_walls(self, xy, need=MARBLE_RADIUS_M + 0.0005):
+        """Move a start point off any wall it would be born inside.
+
+        The marble is placed at its resting height, which is halfway up a 15 mm
+        wall, so a start point closer to a wall than the marble's radius spawns
+        it interpenetrating. PhysX then shoves it out -- which is why the marble
+        arrived up to 13 mm from where it was put, and occasionally stuck fast
+        inside the wall instead. The shipped fixed start sits 4.0 mm from the top
+        boundary wall, 2 mm inside a 6 mm marble.
+        """
+        segs = self.wall_segments()
+        if not segs:
+            return xy
+        p = np.asarray(xy, dtype=float)
+        for _ in range(6):
+            worst_d, worst_c = None, None
+            for a, b in segs:
+                ab = b - a
+                t = np.clip(np.dot(p - a, ab) / max(np.dot(ab, ab), 1e-12), 0.0, 1.0)
+                c = a + t * ab
+                d = float(np.linalg.norm(p - c))
+                if worst_d is None or d < worst_d:
+                    worst_d, worst_c = d, c
+            if worst_d >= need:
+                break
+            away = p - worst_c
+            n = float(np.linalg.norm(away))
+            # Dead centre on the segment gives no direction; step along its normal.
+            away = away / n if n > 1e-9 else np.array([0.0, 1.0])
+            p = worst_c + away * need
+        moved = float(np.linalg.norm(p - np.asarray(xy, dtype=float)))
+        if moved > 1e-6 and self.reset_count < 3:
+            print("[sim] start moved %.1f mm clear of a wall: (%.5f, %.5f) -> (%.5f, %.5f)"
+                  % (1000 * moved, xy[0], xy[1], p[0], p[1]))
+        return float(p[0]), float(p[1])
 
     def reset(self):
         self.servo1.home()
@@ -853,7 +1003,7 @@ class Board:
                 print("[sim] WARNING: asked for the rod upright, it reads %+.1f deg" % placed)
             elif self.reset_count < 2:
                 print("[sim] rod placed %+.2f deg from upright" % placed)
-        start_xy = self.reset_xy()
+        start_xy = self.clear_of_walls(self.reset_xy())
         # Same y flip as marble_board_xy, so the marble is placed where the robot
         # places it rather than at its mirror image.
         height = (self.rest_height if getattr(self, "rest_height", None) is not None
@@ -969,8 +1119,15 @@ def serve(board, args):
                     steps += 1
                     if steps % 500 == 0:
                         rate = steps / (time.time() - t0)
-                        print("[sim] %d steps, %.1f steps/s (%.1fx real time)"
-                              % (steps, rate, rate * board.control_dt))
+                        pend = ""
+                        if board.pend_samples:
+                            pend = ("  pendulum upright %.0f%% of %d, worst %.0f deg"
+                                    % (100.0 * board.pend_hits / board.pend_samples,
+                                       board.pend_samples, board.pend_worst))
+                            board.pend_hits = board.pend_samples = 0
+                            board.pend_worst = 0.0
+                        print("[sim] %d steps, %.1f steps/s (%.1fx real time)%s"
+                              % (steps, rate, rate * board.control_dt, pend))
                 elif cmd == "obs":
                     reply = board.observation()
                 elif cmd == "action":
@@ -985,6 +1142,12 @@ def serve(board, args):
                 conn.sendall(json.dumps(reply).encode("utf-8") + b"\n")
         except (ConnectionResetError, BrokenPipeError, json.JSONDecodeError) as exc:
             print("[sim] link lost (%s); waiting for the learner again" % exc)
+        except Exception:
+            # Print here, not in main(): sim_app.close() tears down carb's stderr,
+            # so a traceback raised past this point is written into a dead stream
+            # and lost. That is why these crashes looked like clean exits.
+            print("[sim] request failed:\n%s" % traceback.format_exc(), flush=True)
+            raise
         finally:
             conn.close()
 
@@ -999,6 +1162,10 @@ def main():
         serve(board, ARGS)
     except KeyboardInterrupt:
         pass
+    except Exception:
+        print("[sim] fatal:\n%s" % traceback.format_exc(), flush=True)
+        sys.stdout.flush()
+        sys.stderr.flush()
     finally:
         sim_app.close()
 

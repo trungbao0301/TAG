@@ -565,7 +565,10 @@ def main():
                         f"{max(over_x, over_y) * 1000:.1f} mm"
                     )
                     cv2.circle(img, (bx, by), 22, (0, 0, 255), 2)
-                panel_lines.append(f"alpha={float(s.alpha):.3f}, beta={float(s.beta):.3f}")
+                panel_lines.append(
+                    f"alpha={math.degrees(float(s.alpha)):+.2f} deg, "
+                    f"beta={math.degrees(float(s.beta)):+.2f} deg"
+                )
 
                 if path is not None:
                     idx, closest = track_path_point(

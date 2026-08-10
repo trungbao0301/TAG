@@ -117,8 +117,35 @@ class MujocoFuruta:
         self.jid_roll = jid("board_roll")
         self.jid_pitch = jid("board_pitch")
         self.substeps = max(1, int(round(CONTROL_DT / self.model.opt.timestep)))
+        self.arm_body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "arm")
         self.policy = FurutaPolicy(weights_path)
         self.reset()
+
+    def reaction(self):
+        """Torque the pendulum feeds back into the board's two tilt axes.
+
+        Isaac drives the pendulum's joints kinematically, so nothing it does
+        reaches the plate; without this the rod could thrash and the marble
+        would never feel it. cfrc_int is the wrench the parent applies to the
+        arm, so its negative is what the arm applies to the plate. MuJoCo
+        expresses it about the tree's subtree CoM, hence the shift to each
+        joint's own anchor before projecting onto its axis.
+
+        Sanity check that catches sign and frame mistakes: at rest with the rod
+        hanging and the board level this must return the static gravity moment,
+        0.027 kg * 9.81 * 0.035 m = 0.00927 N.m about pitch and ~0 about roll.
+        """
+        self.mj.mj_rnePostConstraint(self.model, self.data)
+        w = np.asarray(self.data.cfrc_int[self.arm_body], dtype=np.float64)
+        torque, force = -w[:3], -w[3:]          # what the arm applies to the board
+        com = np.asarray(self.data.subtree_com[self.model.body_rootid[self.arm_body]])
+        out = []
+        for j in (self.jid_roll, self.jid_pitch):
+            anchor = np.asarray(self.data.xanchor[j])
+            axis = np.asarray(self.data.xaxis[j])
+            moment = torque + np.cross(com - anchor, force)
+            out.append(float(moment @ axis))
+        return out[0], out[1]
 
     def reset(self, theta_up=0.0):
         self.mj.mj_resetData(self.model, self.data)
