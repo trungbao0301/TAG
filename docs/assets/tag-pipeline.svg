@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="520" viewBox="0 0 1400 520" role="img" aria-labelledby="title desc">
+<title id="title">TAG System Pipeline</title>
+<desc id="desc">Camera to state estimation to TCP bridge to DreamerV3 GPU learner to servo commands and the physical maze.</desc>
+<defs>
+  <linearGradient id="bg" x1="0" x2="1"><stop offset="0" stop-color="#f7f9fc"/><stop offset="1" stop-color="#eef4fb"/></linearGradient>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#68809d"/></marker>
+  <style>
+    .box{fill:#fff;stroke:#cfd9e5;stroke-width:2}.gpu{fill:#edf4ff;stroke:#9ebce9;stroke-width:2}.robot{fill:#fff8f0;stroke:#edbb8f;stroke-width:2}
+    .t{font:700 24px system-ui,sans-serif;fill:#14243a}.s{font:500 16px system-ui,sans-serif;fill:#66758a}.k{font:800 14px system-ui,sans-serif;letter-spacing:2px;fill:#1f62d0}.ko{fill:#d8711c}.a{stroke:#68809d;stroke-width:3;fill:none;marker-end:url(#arrow)}
+  </style>
+</defs>
+<rect width="1400" height="520" rx="28" fill="url(#bg)"/>
+<text x="55" y="62" class="k">ROBOT MACHINE</text>
+<text x="1045" y="62" class="k">GPU SERVER</text>
+
+<rect x="55" y="120" width="230" height="120" rx="18" class="box"/>
+<text x="82" y="168" class="t">Camera</text><text x="82" y="199" class="s">top-down image stream</text>
+
+<rect x="355" y="120" width="280" height="120" rx="18" class="box"/>
+<text x="382" y="163" class="t">State Estimation</text><text x="382" y="194" class="s">marble position + board tilt</text>
+
+<rect x="705" y="120" width="240" height="120" rx="18" class="box"/>
+<text x="732" y="163" class="t">TCP Bridge</text><text x="732" y="194" class="s">real-time state / action</text>
+
+<rect x="1020" y="103" width="315" height="154" rx="18" class="gpu"/>
+<text x="1049" y="150" class="t">DreamerV3</text><text x="1049" y="180" class="s">world model · actor · critic</text><text x="1049" y="213" class="s">GPU training + policy inference</text>
+
+<rect x="705" y="335" width="240" height="120" rx="18" class="box"/>
+<text x="732" y="378" class="t">Servo Driver</text><text x="732" y="409" class="s">two-axis velocity commands</text>
+
+<rect x="355" y="335" width="280" height="120" rx="18" class="robot"/>
+<text x="382" y="378" class="t">TAG Maze</text><text x="382" y="409" class="s">roll · pitch · steel marble</text>
+
+<path d="M285 180 H355" class="a"/><path d="M635 180 H705" class="a"/><path d="M945 180 H1020" class="a"/>
+<path d="M1175 257 C1175 315 985 305 945 395" class="a"/><path d="M705 395 H635" class="a"/>
+<path d="M480 335 C480 290 170 305 170 240" class="a"/>
+
+<text x="658" y="164" class="s">state</text><text x="958" y="164" class="s">TCP :5555</text><text x="956" y="373" class="s">action</text>
+<text x="85" y="380" class="k ko">CLOSED LOOP</text><text x="85" y="408" class="s">physical motion changes</text><text x="85" y="430" class="s">the next camera frame</text>
+</svg>

@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="TAG — a vision-based model-based reinforcement learning testbed for labyrinth marble control, sim-to-real, and disturbance adaptation." />
+  <title>TAG | Labyrinth Marble Robot</title>
+  <link rel="stylesheet" href="assets/site.css" />
+  <script defer src="assets/site.js"></script>
+</head>
+<body>
+  <header class="topbar" id="top">
+    <div class="nav-wrap">
+      <a class="brand" href="#top" aria-label="TAG home"><span class="brand-dot"></span>TAG</a>
+      <nav class="nav" aria-label="Main navigation">
+        <a href="#overview">Overview</a>
+        <a href="#pipeline">Pipeline</a>
+        <a href="#simulation">Simulation</a>
+        <a href="#learning">Learning</a>
+        <a href="#experiments">Experiments</a>
+        <a href="#results">Results</a>
+      </nav>
+      <a class="nav-github" href="https://github.com/trungbao0301/TAG" target="_blank" rel="noreferrer">GitHub ↗</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero section-pad">
+      <div class="hero-inner">
+        <div class="eyebrow">Research Testbed · Vision · Reinforcement Learning · Sim-to-Real</div>
+        <h1>TAG</h1>
+        <p class="hero-title">A Labyrinth Marble Robot for Learning-Based Dynamic Control</p>
+        <p class="hero-lede">
+          A camera-driven, two-axis tilting maze where a DreamerV3 agent learns to control a steel marble from real experience, with a digital twin in Isaac Sim and a disturbance platform for robustness experiments.
+        </p>
+
+        <div class="authors" aria-label="Authors">
+          <span>Trung Bao Truong</span><span>Dat Nguyen</span><span>Thinh Doan</span><span class="muted">and collaborators</span>
+        </div>
+        <div class="affiliation">The University of Texas at Austin</div>
+
+        <div class="hero-actions">
+          <a class="btn primary" href="https://github.com/trungbao0301/TAG" target="_blank" rel="noreferrer">Code</a>
+          <a class="btn" href="#experiments">Videos</a>
+          <button class="btn disabled" type="button" disabled title="Add the paper URL when available">Paper · Coming Soon</button>
+        </div>
+      </div>
+
+      <div class="hero-visual card">
+        <div class="hero-visual-grid">
+          <div>
+            <div class="panel-label">REAL SYSTEM</div>
+            <div class="media-placeholder tall" data-media="real-hero">
+              <div class="media-icon">▶</div>
+              <strong>Add real TAG demo</strong>
+              <span>assets/videos/tag_real.mp4</span>
+            </div>
+          </div>
+          <div>
+            <div class="panel-label">ISAAC SIM</div>
+            <div class="media-placeholder tall" data-media="sim-hero">
+              <div class="media-icon">▶</div>
+              <strong>Add Isaac Sim demo</strong>
+              <span>assets/videos/tag_isaac.mp4</span>
+            </div>
+          </div>
+        </div>
+        <p class="caption">Suggested hero: synchronized side-by-side real and simulation rollouts from similar initial conditions.</p>
+      </div>
+    </section>
+
+    <section class="band" id="overview">
+      <div class="section narrow">
+        <div class="section-kicker">Overview</div>
+        <h2>A physical learning system where perception, control, and dynamics meet.</h2>
+        <p class="lead">
+          TAG is a model-based reinforcement-learning robot that plays a labyrinth marble maze. A top-down camera estimates the marble and board state, two Hiwonder servos tilt the board, and a DreamerV3 agent trains on a GPU server while interacting with the physical system in real time.
+        </p>
+
+        <div class="metric-row">
+          <div class="metric"><strong>2-DoF</strong><span>roll + pitch actuation</span></div>
+          <div class="metric"><strong>Vision</strong><span>online marble state estimation</span></div>
+          <div class="metric"><strong>DreamerV3</strong><span>model-based RL controller</span></div>
+          <div class="metric"><strong>Isaac Sim</strong><span>digital-twin experiments</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-pad" id="pipeline">
+      <div class="section-kicker">System Pipeline</div>
+      <h2>From camera pixels to board motion.</h2>
+      <p class="section-intro">The robot and learner are separated across two machines: the robot machine handles sensing, estimation, and servo I/O; the GPU server runs DreamerV3 and returns actions over TCP.</p>
+
+      <div class="figure-card card">
+        <img src="assets/tag-pipeline.svg" alt="TAG system pipeline from camera through state estimation and DreamerV3 to servos" />
+      </div>
+
+      <div class="steps">
+        <article class="step"><span>01</span><h3>Observe</h3><p>The camera captures the moving board and steel marble.</p></article>
+        <article class="step"><span>02</span><h3>Estimate</h3><p>Perception estimates marble position and board tilt in real time.</p></article>
+        <article class="step"><span>03</span><h3>Learn</h3><p>DreamerV3 updates its latent world model, value function, and policy.</p></article>
+        <article class="step"><span>04</span><h3>Act</h3><p>Continuous control commands drive the two board servos.</p></article>
+      </div>
+    </section>
+
+    <section class="section section-pad split-section" id="testbed">
+      <div>
+        <div class="section-kicker">The TAG Testbed</div>
+        <h2>A deliberately difficult tabletop control problem.</h2>
+        <p>The marble must travel through a constrained maze while avoiding walls and holes. Small board-angle changes can produce large downstream trajectory changes, making TAG useful for studying long-horizon feedback control, learning efficiency, and robustness.</p>
+        <ul class="clean-list">
+          <li>Steel marble with fast rolling dynamics</li>
+          <li>Two independently actuated board axes</li>
+          <li>Top-down camera for closed-loop perception</li>
+          <li>Maze walls, holes, and narrow passages</li>
+          <li>Optional pendulum-induced mechanical disturbance</li>
+        </ul>
+      </div>
+      <div class="card map-card">
+        <div class="panel-label">MAZE GEOMETRY</div>
+        <img class="repo-image" src="path_grid.png" alt="TAG maze path grid" onerror="this.hidden=true;this.nextElementSibling.hidden=false" />
+        <div class="fallback-art" hidden>
+          <div class="maze-lines" aria-hidden="true"></div>
+          <strong>Existing repo image goes here</strong>
+          <span>docs/path_grid.png</span>
+        </div>
+        <p class="caption">This page automatically uses <code>docs/path_grid.png</code> when installed inside the TAG repository.</p>
+      </div>
+    </section>
+
+    <section class="band soft" id="simulation">
+      <div class="section section-pad">
+        <div class="section-kicker">Digital Twin · Isaac Sim</div>
+        <h2>Train and stress-test before touching hardware.</h2>
+        <p class="section-intro">The simulation reproduces the board, walls, holes, marble dynamics, and two-axis actuation so policies and experimental ideas can be tested quickly before real-hardware deployment.</p>
+
+        <div class="two-col-media">
+          <div class="card media-card">
+            <div class="panel-label">SIMULATION ROLLOUT</div>
+            <div class="media-placeholder" data-media="sim-rollout"><div class="media-icon">▶</div><strong>Isaac Sim rollout</strong><span>assets/videos/sim_rollout.mp4</span></div>
+          </div>
+          <div class="card media-card">
+            <div class="panel-label">SIM → REAL COMPARISON</div>
+            <div class="media-placeholder" data-media="sim-real"><div class="media-icon">↔</div><strong>Side-by-side comparison</strong><span>assets/videos/sim_to_real.mp4</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-pad" id="learning">
+      <div class="section-kicker">Learning with DreamerV3</div>
+      <h2>Learn a world model, then improve behavior in imagination.</h2>
+      <p class="section-intro">Rather than learning only from direct trial-and-error updates, DreamerV3 learns compact latent dynamics from experience and trains its actor and critic on imagined trajectories inside that learned model.</p>
+
+      <div class="figure-card card dreamer-card">
+        <img src="assets/dreamer-loop.svg" alt="DreamerV3 learning loop for TAG" />
+      </div>
+
+      <div class="callout-grid">
+        <article><h3>Observation</h3><p>Estimated marble state and board state enter the environment interface.</p></article>
+        <article><h3>World Model</h3><p>A recurrent latent dynamics model predicts future representations, rewards, and continuation.</p></article>
+        <article><h3>Actor / Critic</h3><p>Imagined rollouts are used to improve actions and value estimates efficiently.</p></article>
+      </div>
+    </section>
+
+    <section class="band dark" id="experiments">
+      <div class="section section-pad">
+        <div class="section-kicker light">Experiments</div>
+        <h2>Nominal control, disturbance adaptation, and sim-to-real.</h2>
+        <p class="section-intro light-text">Use this section as the visual center of the site. Replace the placeholders with short, looping MP4 clips that start immediately and make the behavior easy to compare.</p>
+
+        <div class="experiment-grid">
+          <article class="experiment-card">
+            <div class="experiment-head"><span>01</span><h3>Nominal</h3></div>
+            <div class="media-placeholder dark-media" data-media="nominal"><div class="media-icon">▶</div><strong>Maze completion</strong><span>tag_nominal.mp4</span></div>
+            <p>Baseline policy on the physical testbed with the disturbance mechanism off.</p>
+          </article>
+          <article class="experiment-card">
+            <div class="experiment-head"><span>02</span><h3>Disturbance</h3></div>
+            <div class="media-placeholder dark-media" data-media="disturbance"><div class="media-icon">≈</div><strong>Pendulum ON</strong><span>tag_disturbance.mp4</span></div>
+            <p>Evaluate robustness when pendulum vibration changes the board dynamics.</p>
+          </article>
+          <article class="experiment-card">
+            <div class="experiment-head"><span>03</span><h3>Adaptation</h3></div>
+            <div class="media-placeholder dark-media" data-media="adapted"><div class="media-icon">↗</div><strong>Adapted policy</strong><span>tag_adapted.mp4</span></div>
+            <p>Show performance before and after additional learning under the disturbed dynamics.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-pad" id="results">
+      <div class="section-kicker">Results</div>
+      <h2>Put the main quantitative story in one place.</h2>
+      <p class="section-intro">The cards below are intentionally data-ready placeholders. Replace the sample values with measured results when your experiments are finalized.</p>
+
+      <div class="result-cards">
+        <article class="result-card"><span class="result-label">Success Rate</span><strong>—</strong><small>full-map completion</small></article>
+        <article class="result-card"><span class="result-label">Completion Time</span><strong>—</strong><small>median successful run</small></article>
+        <article class="result-card"><span class="result-label">Path Error</span><strong>—</strong><small>mean tracking error</small></article>
+        <article class="result-card"><span class="result-label">Disturbance Gain</span><strong>—</strong><small>before vs. after adaptation</small></article>
+      </div>
+
+      <div class="chart-grid">
+        <article class="card chart-placeholder">
+          <div><strong>Training return</strong><span>Add exported TensorBoard plot</span></div>
+          <div class="fake-chart" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </article>
+        <article class="card chart-placeholder">
+          <div><strong>Success rate by condition</strong><span>Nominal · disturbance · adapted</span></div>
+          <div class="fake-bars" aria-hidden="true"><i></i><i></i><i></i></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="band soft" id="implementation">
+      <div class="section section-pad">
+        <div class="section-kicker">Implementation</div>
+        <h2>Open-source ROS 2 + DreamerV3 stack.</h2>
+        <div class="implementation-grid">
+          <div class="impl"><code>/tag_camera/image</code><span>camera → estimator</span></div>
+          <div class="impl"><code>/tag_state_estimation/estimate</code><span>estimated state</span></div>
+          <div class="impl"><code>TCP :5555</code><span>robot ↔ GPU server</span></div>
+          <div class="impl"><code>/tag_hiwonder/cmd</code><span>controller → servos</span></div>
+        </div>
+        <div class="center-actions">
+          <a class="btn primary" href="https://github.com/trungbao0301/TAG" target="_blank" rel="noreferrer">Explore the repository ↗</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-pad" id="citation">
+      <div class="section-kicker">Citation</div>
+      <h2>Paper coming soon.</h2>
+      <p class="section-intro">When the manuscript is public, replace this placeholder with the final BibTeX entry and link the Paper button at the top of the page.</p>
+      <pre class="bibtex"><code>@article{tag2026,
+  title   = {TAG: A Labyrinth Marble Robot for Learning-Based Dynamic Control},
+  author  = {Truong, Trung Bao and Nguyen, Dat and Doan, Thinh and ...},
+  journal = {Manuscript in preparation},
+  year    = {2026}
+}</code></pre>
+    </section>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div><strong>TAG</strong><span>Labyrinth Marble Robot</span></div>
+      <div class="footer-links"><a href="#top">Back to top ↑</a><a href="https://github.com/trungbao0301/TAG" target="_blank" rel="noreferrer">GitHub ↗</a></div>
+    </div>
+  </footer>
+</body>
+</html>

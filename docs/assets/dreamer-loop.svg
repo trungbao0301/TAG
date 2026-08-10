@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="560" viewBox="0 0 1400 560" role="img" aria-labelledby="title desc">
+<title id="title">DreamerV3 loop for TAG</title><desc id="desc">Experience is encoded into a recurrent world model, imagined rollouts train actor and critic, and actions return to TAG.</desc>
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0 L0 6 L9 3 z" fill="#637c9b"/></marker>
+  <style>.b{fill:white;stroke:#cfd9e5;stroke-width:2}.bm{fill:#edf4ff;stroke:#99b8e7;stroke-width:2}.ba{fill:#fff5eb;stroke:#e9ad78;stroke-width:2}.t{font:700 24px system-ui;fill:#132237}.s{font:500 16px system-ui;fill:#68788e}.k{font:800 13px system-ui;letter-spacing:2px;fill:#1f62d0}.a{stroke:#637c9b;stroke-width:3;fill:none;marker-end:url(#arr)}</style>
+</defs>
+<rect width="1400" height="560" rx="28" fill="#f7f9fc"/>
+<text x="64" y="64" class="k">DREAMERV3 CONTROL LOOP</text>
+<rect x="68" y="173" width="235" height="145" rx="18" class="ba"/><text x="96" y="218" class="t">TAG Environment</text><text x="96" y="252" class="s">state · reward</text><text x="96" y="278" class="s">physical interaction</text>
+<rect x="383" y="173" width="250" height="145" rx="18" class="b"/><text x="413" y="218" class="t">Encoder</text><text x="413" y="252" class="s">observation → latent</text><text x="413" y="278" class="s">representation</text>
+<rect x="713" y="145" width="280" height="200" rx="18" class="bm"/><text x="743" y="194" class="t">World Model</text><text x="743" y="228" class="s">recurrent latent dynamics</text><text x="743" y="257" class="s">reward prediction</text><text x="743" y="286" class="s">continuation prediction</text><text x="743" y="315" class="s">imagined trajectories</text>
+<rect x="1073" y="100" width="250" height="145" rx="18" class="b"/><text x="1103" y="145" class="t">Critic</text><text x="1103" y="179" class="s">estimate long-term</text><text x="1103" y="205" class="s">return</text>
+<rect x="1073" y="300" width="250" height="145" rx="18" class="b"/><text x="1103" y="345" class="t">Actor</text><text x="1103" y="379" class="s">choose roll / pitch</text><text x="1103" y="405" class="s">action</text>
+<path d="M303 245 H383" class="a"/><path d="M633 245 H713" class="a"/><path d="M993 198 C1028 198 1038 173 1073 173" class="a"/><path d="M993 293 C1028 293 1038 372 1073 372" class="a"/>
+<path d="M1073 407 C960 500 244 500 185 318" class="a"/>
+<path d="M1198 245 V300" class="a"/>
+<text x="323" y="230" class="s">observation</text><text x="647" y="230" class="s">latent state</text><text x="1020" y="480" class="s">action closes the real-world loop</text>
+</svg>
