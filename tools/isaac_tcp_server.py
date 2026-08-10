@@ -640,7 +640,11 @@ class Board:
         settle to land near the marble's radius instead of in free fall.
         """
         wall_height_m = 0.015
-        thickness_m = 0.004
+        # Deliberately oversized while this is first being gotten working: 3x
+        # the board's XZ footprint and 5cm thick, so a rough placement still
+        # catches the marble. Shrink back down once a settle actually lands
+        # near the marble's radius instead of in free fall.
+        thickness_m = 0.05
         floor_top_local_y = self.mesh_hi[1] - wall_height_m
         center_mesh_local = Gf.Vec3d(
             (self.mesh_lo[0] + self.mesh_hi[0]) / 2.0,
@@ -648,6 +652,8 @@ class Board:
             (self.mesh_lo[2] + self.mesh_hi[2]) / 2.0,
         )
         center_board_local = self.mesh_in_board.Transform(center_mesh_local)
+        width = 3.0 * float(self.mesh_hi[0] - self.mesh_lo[0])
+        depth = 3.0 * float(self.mesh_hi[2] - self.mesh_lo[2])
 
         cube = UsdGeom.Cube.Define(self.stage, "/World/TAG/Board/BarePlateFloor")
         cube.CreateSizeAttr(1.0)
@@ -655,15 +661,18 @@ class Board:
         xform = UsdGeom.Xformable(prim)
         xform.ClearXformOpOrder()
         xform.AddTranslateOp().Set(Gf.Vec3d(center_board_local))
-        xform.AddScaleOp().Set(Gf.Vec3d(
-            float(self.mesh_hi[0] - self.mesh_lo[0]),
-            thickness_m,
-            float(self.mesh_hi[2] - self.mesh_lo[2]),
-        ))
+        xform.AddScaleOp().Set(Gf.Vec3d(width, thickness_m, depth))
         UsdPhysics.CollisionAPI.Apply(prim)
         UsdGeom.Imageable(prim).MakeInvisible()  # a physics stand-in, not meant to be seen
-        print("[sim] --hide-maze: added a bare flat-plate collider, "
-              "board-local y=%.4f" % center_board_local[1])
+
+        world_center = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(
+            Usd.TimeCode.Default()).Transform(Gf.Vec3d(0, 0, 0))
+        marble_pos, _ = self.marble.get_world_pose()
+        print("[sim] --hide-maze: bare floor -- board-local center=%s size=(%.3f,%.3f,%.3f)"
+              % (tuple(round(v, 4) for v in center_board_local), width, thickness_m, depth))
+        print("[sim] --hide-maze: bare floor world center=%s, marble world pos at "
+              "construction=%s" % (tuple(round(v, 4) for v in world_center),
+                                     tuple(round(float(v), 4) for v in marble_pos)))
 
     def _calibrate_rest_height(self):
         """Measure where a settled marble sits, instead of assuming.
