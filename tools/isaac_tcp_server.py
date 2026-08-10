@@ -176,7 +176,7 @@ sim_app = SimulationApp({"headless": True})
 import numpy as np  # noqa: E402
 import cv2  # noqa: E402
 import omni.usd  # noqa: E402
-from pxr import Usd, UsdGeom, Gf  # noqa: E402
+from pxr import Usd, UsdGeom, UsdPhysics, Gf  # noqa: E402
 from isaacsim.core.api import SimulationContext  # noqa: E402
 from isaacsim.core.prims import SingleRigidPrim, SingleArticulation  # noqa: E402
 from isaacsim.core.utils.types import ArticulationAction  # noqa: E402
@@ -507,6 +507,7 @@ class Board:
             if maze_prim.IsValid():
                 maze_prim.SetActive(False)
                 print("[sim] --hide-maze: maze mesh and its collider deactivated")
+                self._add_bare_floor()
             else:
                 print("[sim] --hide-maze: WARNING, /World/TAG/Board/mazeCad not found")
 
@@ -621,6 +622,48 @@ class Board:
         self.rest_height = None
         self.reset()
         self._calibrate_rest_height()
+
+    def _add_bare_floor(self):
+        """A flat collider where the maze's own floor used to be.
+
+        mazeCad is walls, holes, AND the floor in one mesh -- deactivating it
+        for --hide-maze drops the marble's only support, and it just
+        free-falls (measured: settles ~74mm below the wall tops, nowhere near
+        a floor, instead of the couple of mm a real rest should read). This
+        substitutes a plain box collider at the height the maze's floor sat
+        at (wall tops minus the 15mm wall height, both taken from
+        tag_state_estimation/core/maze_layout.py's real measurements), as a
+        sibling of mazeCad under the same rigid body, so it tilts with the
+        plate exactly as the maze surface did. _calibrate_rest_height() below
+        then measures the marble's actual settle against it -- no need to
+        get this exactly right by construction, only close enough for that
+        settle to land near the marble's radius instead of in free fall.
+        """
+        wall_height_m = 0.015
+        thickness_m = 0.004
+        floor_top_local_y = self.mesh_hi[1] - wall_height_m
+        center_mesh_local = Gf.Vec3d(
+            (self.mesh_lo[0] + self.mesh_hi[0]) / 2.0,
+            floor_top_local_y - thickness_m / 2.0,
+            (self.mesh_lo[2] + self.mesh_hi[2]) / 2.0,
+        )
+        center_board_local = self.mesh_in_board.Transform(center_mesh_local)
+
+        cube = UsdGeom.Cube.Define(self.stage, "/World/TAG/Board/BarePlateFloor")
+        cube.CreateSizeAttr(1.0)
+        prim = cube.GetPrim()
+        xform = UsdGeom.Xformable(prim)
+        xform.ClearXformOpOrder()
+        xform.AddTranslateOp().Set(Gf.Vec3d(center_board_local))
+        xform.AddScaleOp().Set(Gf.Vec3d(
+            float(self.mesh_hi[0] - self.mesh_lo[0]),
+            thickness_m,
+            float(self.mesh_hi[2] - self.mesh_lo[2]),
+        ))
+        UsdPhysics.CollisionAPI.Apply(prim)
+        UsdGeom.Imageable(prim).MakeInvisible()  # a physics stand-in, not meant to be seen
+        print("[sim] --hide-maze: added a bare flat-plate collider, "
+              "board-local y=%.4f" % center_board_local[1])
 
     def _calibrate_rest_height(self):
         """Measure where a settled marble sits, instead of assuming.
