@@ -155,6 +155,12 @@ def parse_args():
                         "/camera.png endpoint only. The observation is untouched, "
                         "so watching costs a fraction of a render instead of one "
                         "per step and the policy keeps seeing what it was seeing.")
+    p.add_argument("--hide-maze", action="store_true",
+                   help="deactivate the maze mesh (and its collider with it) "
+                        "after reading the board extents from it, leaving a "
+                        "bare plate -- for the ball-plate task's arbitrary "
+                        "drawn/random paths, which the maze's walls and holes "
+                        "would otherwise just get in the way of.")
     p.add_argument("--camera-prim", default="/World/Camera_TAG")
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=400)
@@ -491,6 +497,18 @@ class Board:
         pts = np.array(UsdGeom.Mesh(mesh).GetPointsAttr().Get(), dtype=np.float64)
         self.mesh_lo = pts.min(axis=0)
         self.mesh_hi = pts.max(axis=0)
+
+        # Board extents, mesh transform, and mesh_in_board are already pulled
+        # out above -- deactivating now (after reading them, not before) drops
+        # the maze's render geometry and its collider together, since USD
+        # deactivation removes a prim's whole subtree from composition.
+        if args.hide_maze:
+            maze_prim = self.stage.GetPrimAtPath("/World/TAG/Board/mazeCad")
+            if maze_prim.IsValid():
+                maze_prim.SetActive(False)
+                print("[sim] --hide-maze: maze mesh and its collider deactivated")
+            else:
+                print("[sim] --hide-maze: WARNING, /World/TAG/Board/mazeCad not found")
 
         self.servo1 = ServoAxis()
         self.servo2 = ServoAxis()

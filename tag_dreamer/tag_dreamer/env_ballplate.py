@@ -86,6 +86,11 @@ class BallPlateGym(gym.Env):
         seed_env = os.environ.get("TAG_BP_SEED", "")
         self.rng = np.random.default_rng(int(seed_env) if seed_env else None)
 
+        # When set, every episode replays this hand-drawn path instead of a
+        # random one -- see tools/draw_path_server.py. Points are lower-left
+        # board metres, same convention as everything else here.
+        self.path_file = os.environ.get("TAG_BP_PATH_FILE", "")
+
         # There are no walls to make a shortcut geometrically impossible (the
         # maze env's whole anti-cheat scheme), so distance-to-path is the only
         # thing keeping "progress" tied to actually tracing the path's shape
@@ -163,19 +168,39 @@ class BallPlateGym(gym.Env):
         return json.loads(line)
 
     def _new_path(self, start_lower_left):
-        waypoints = generate_waypoints(
-            self.rng,
-            self.board_width,
-            self.board_height,
-            start=start_lower_left,
-            margin=self.path_margin,
-            num_segments=self.num_segments,
-            min_step=self.min_step,
-            max_step=self.max_step,
-            max_turn_rad=self.max_turn_rad,
-        )
+        waypoints = self._load_external_waypoints()
+        if waypoints is None:
+            waypoints = generate_waypoints(
+                self.rng,
+                self.board_width,
+                self.board_height,
+                start=start_lower_left,
+                margin=self.path_margin,
+                num_segments=self.num_segments,
+                min_step=self.min_step,
+                max_step=self.max_step,
+                max_turn_rad=self.max_turn_rad,
+            )
         self.p = LinearPath(waypoints, distance=self.path_distance)
         self._waypoint_indices = None
+
+    def _load_external_waypoints(self):
+        """A hand-drawn path from tools/draw_path_server.py, if one is set.
+
+        Read fresh every episode rather than cached, so drawing a new path
+        takes effect on the next reset without restarting the env.
+        """
+        if not self.path_file:
+            return None
+        try:
+            with open(self.path_file, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            waypoints = np.asarray(payload["waypoints"], dtype=np.float32)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            return None
+        if waypoints.ndim != 2 or waypoints.shape[1] != 2 or waypoints.shape[0] < 2:
+            return None
+        return waypoints
 
     def _waypoint_path_indices(self):
         if self._waypoint_indices is None:
