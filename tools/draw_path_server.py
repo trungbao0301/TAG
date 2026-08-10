@@ -28,14 +28,30 @@ PAGE = """<!doctype html>
   canvas {{ background: #333; border: 2px solid #666; cursor: crosshair; }}
   button {{ font-size: 16px; padding: 8px 16px; margin: 4px; }}
   #status {{ margin-top: 8px; }}
+  #panels {{ display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }}
+  #live img {{ max-width: {width_px}px; image-rendering: pixelated; border: 2px solid #666; }}
 </style></head>
 <body>
 <h2>Draw a path (click to add points, in order)</h2>
+<div id="panels">
+<div id="draw">
 <canvas id="board" width="{width_px}" height="{height_px}"></canvas><br>
 <button onclick="undo()">Undo</button>
 <button onclick="clearAll()">Clear</button>
 <button onclick="send()">Send to policy</button>
 <div id="status">{num_points} point(s) currently saved.</div>
+</div>
+<div id="live">
+<div>Live view ({overlay_url})</div>
+<img id="liveimg" src="{overlay_url}/frame.png"
+     onerror="this.style.opacity=0.3" onload="this.style.opacity=1">
+</div>
+</div>
+<script>
+setInterval(function() {{
+  document.getElementById('liveimg').src = '{overlay_url}/frame.png?' + Date.now();
+}}, 150);
+</script>
 <script>
 const W_M = {board_w}, H_M = {board_h};
 const canvas = document.getElementById('board');
@@ -86,6 +102,7 @@ class Handler(BaseHTTPRequestHandler):
     board_width = BOARD_WIDTH_M
     board_height = BOARD_HEIGHT_M
     px_per_m = 2500
+    overlay_url = ""
 
     def _load_current(self):
         try:
@@ -107,6 +124,7 @@ class Handler(BaseHTTPRequestHandler):
             board_h=self.board_height,
             num_points=len(points),
             initial_points=json.dumps(points),
+            overlay_url=self.overlay_url,
         ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -157,11 +175,18 @@ def main():
                     help="must match TAG_BP_PATH_FILE on the env's side")
     p.add_argument("--board-width", type=float, default=BOARD_WIDTH_M)
     p.add_argument("--board-height", type=float, default=BOARD_HEIGHT_M)
+    p.add_argument("--overlay-url", default="",
+                    help="base URL of isaac_tcp_server.py's --overlay-port "
+                         "(e.g. http://localhost:8089), as reachable from "
+                         "the browser -- through the same tunnel. Shows a "
+                         "live view of the drawn path running, next to the "
+                         "canvas. Empty = no live view.")
     args = p.parse_args()
 
     Handler.path_file = os.path.expanduser(args.path_file)
     Handler.board_width = args.board_width
     Handler.board_height = args.board_height
+    Handler.overlay_url = args.overlay_url.rstrip("/")
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"[draw_path_server] http://{args.host}:{args.port}  ->  {Handler.path_file}")
