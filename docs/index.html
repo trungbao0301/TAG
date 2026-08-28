@@ -1,85 +1,302 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="TAG: Testbed for Autonomous Games, a compact physical platform for studying learning and control in physically coupled dynamical systems." />
+
+  <meta
+    name="description"
+    content="TAG: Testbed for Autonomous Games, a compact physical platform for studying learning and control in physically coupled dynamical systems."
+  />
+
   <title>TAG | Testbed for Autonomous Games</title>
+
   <link rel="stylesheet" href="assets/site.css?v=578d31c" />
+
   <style>
-    .nav-wrap{height:76px}
-    .brand{line-height:1.15}
-    .brand .brand-dot{flex:0 0 auto}
-    .brand .brand-copy{width:auto;height:auto;border-radius:0;background:transparent;display:flex;flex-direction:column;gap:3px}
-    .brand .brand-copy strong{font-size:18px}
-    .brand .brand-copy small{font-size:11px;font-weight:700;color:#5f6f82}
-    @media(max-width:650px){.nav-wrap{height:82px}.brand .brand-copy strong{font-size:15px}.brand .brand-copy small{font-size:10px}}
+    .nav-wrap {
+      height: 76px;
+    }
+
+    .brand {
+      line-height: 1.15;
+    }
+
+    .brand .brand-dot {
+      flex: 0 0 auto;
+    }
+
+    .brand .brand-copy {
+      width: auto;
+      height: auto;
+      border-radius: 0;
+      background: transparent;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .brand .brand-copy strong {
+      font-size: 18px;
+    }
+
+    .brand .brand-copy small {
+      font-size: 11px;
+      font-weight: 700;
+      color: #5f6f82;
+    }
+
+    /* Center labels above the demos */
+    .media-label {
+      text-align: center;
+    }
+
+    /* Make CyberRunner clearly visible as a link */
+    .cyberrunner-link {
+      color: blue;
+      text-decoration: underline;
+    }
+
+    @media (max-width: 650px) {
+      .nav-wrap {
+        height: 82px;
+      }
+
+      .brand .brand-copy strong {
+        font-size: 15px;
+      }
+
+      .brand .brand-copy small {
+        font-size: 10px;
+      }
+    }
   </style>
 </head>
+
+
 <body>
+
 <header class="topbar">
   <div class="nav-wrap">
+
     <a class="brand" href="#top">
       <span class="brand-dot"></span>
+
       <span class="brand-copy">
         <strong>TAG - Testbed for Autonomous Games</strong>
-        <small>COOL Autonomy Lab &middot; The University of Texas at Austin</small>
+        <small>
+          COOL Autonomy Lab &middot; The University of Texas at Austin
+        </small>
       </span>
     </a>
-    
+
   </div>
 </header>
 
+
 <main id="top">
 
-<section class="band" id="system">
-  <div class="section">
-    
-    <h2>A physical benchmark for coupled learning and control.</h2>
-    <div class="system-grid" style="align-items:center">
-      <div>
-        <p class="lead" style="margin-left:0;margin-right:0">TAG provides a compact physical platform for studying <strong>learning and control in physically coupled dynamical systems</strong>. The testbed consists of an autonomous maze board integrated with a rotary inverted pendulum. A dedicated controller actively tilts and steers the maze, while an overhead camera provides visual measurements of the marble's motion. At the same time, the top-mounted rotary inverted pendulum dynamically interacts with the shared platform, injecting reaction torque and vibration that couple the pendulum, board, and marble dynamics. This creates a challenging yet controllable environment in which multiple subsystems interact through shared physical dynamics rather than operating independently.</p>
-        <p class="lead" style="margin-left:0;margin-right:0">TAG supports research in model-based and model-free learning, system identification, reinforcement learning, adaptive and robust control, multi-agent decision-making, and learning under disturbances and partial observability. More broadly, our goal is to provide a reproducible physical benchmark for developing AI and control algorithms that must learn, predict, and make decisions in the presence of <strong>physical coupling, dynamic interactions, uncertainty, and nonstationary environments</strong>.</p>
-        <p class="lead" style="margin-left:0;margin-right:0">The maze side is inspired by <a href="https://github.com/thomasbi1/cyberrunner" target="_blank" rel="noreferrer">CyberRunner</a>.</p>
-      </div>
-      <figure class="card image-card large overview-photo">
-        <img src="assets/images/tag_physical_hardware.png" alt="Physical TAG testbed" />
-        <figcaption>TAG hardware platform.</figcaption>
-      </figure>
-    </div>
-  </div>
-</section>
+  <section class="band" id="system">
 
-<section class="section demos" id="demos">
-  
-  <h2>Real hardware and integrated simulation</h2>
-  <div class="demo-grid">
-    <figure class="card media-card">
-      <div class="media-label">REAL HARDWARE</div>
-      <video src="assets/videos/tag_real.mp4" autoplay loop muted playsinline controls preload="metadata"></video>
-      <figcaption>TAG hardware demo.</figcaption>
-    </figure>
-    <figure class="card media-card">
-      <div class="media-label">ISAAC SIM</div>
-      <img class="animated-demo" src="assets/videos/tag_sim_full_success.gif" alt="Animated TAG simulation demonstration" />
-      <figcaption>TAG simulation demo.</figcaption>
-    </figure>
-  </div>
-</section>
+    <div class="section">
+
+      <div class="system-grid" style="align-items:center">
+
+        <div>
+
+          <p class="lead" style="margin-left:0;margin-right:0">
+            TAG provides a compact physical platform for studying
+            <strong>
+              learning and control in physically coupled dynamical systems
+            </strong>.
+            The testbed consists of an autonomous maze board integrated with a
+            rotary inverted pendulum<sup>1</sup>.
+            A dedicated controller actively tilts and steers the maze, while an
+            overhead camera provides visual measurements of the marble's motion.
+            At the same time, the top-mounted rotary inverted pendulum dynamically
+            interacts with the shared platform, injecting reaction torque and
+            vibration that couple the pendulum, board, and marble dynamics.
+            This creates a challenging yet controllable environment in which
+            multiple subsystems interact through shared physical dynamics rather
+            than operating independently.
+          </p>
+
+
+          <p class="lead" style="margin-left:0;margin-right:0">
+            TAG supports research in model-based and model-free learning,
+            system identification, reinforcement learning, adaptive and robust
+            control, multi-agent decision-making, and learning under disturbances
+            and partial observability. More broadly, our goal is to provide a
+            reproducible physical benchmark for developing AI and control algorithms
+            that must learn, predict, and make decisions in the presence of
+            <strong>
+              physical coupling, dynamic interactions, uncertainty, and
+              nonstationary environments
+            </strong>.
+          </p>
+
+
+          <p class="lead" style="margin-left:0;margin-right:0">
+            <sup>1</sup>
+            The autonomous maze is inspired by
+            <a
+              class="cyberrunner-link"
+              href="https://www.cyberrunner.ai/"
+              target="_blank"
+              rel="noreferrer"
+            >CyberRunner</a>.
+          </p>
+
+        </div>
+
+
+        <figure class="card image-card large overview-photo">
+
+          <img
+            src="assets/images/tag_physical_hardware.png"
+            alt="Physical TAG testbed"
+          />
+
+          <figcaption>
+            TAG hardware platform.
+          </figcaption>
+
+        </figure>
+
+      </div>
+
+    </div>
+
+  </section>
+
+
+
+  <section class="section demos" id="demos">
+
+    <h2>Demos</h2>
+
+
+    <div class="demo-grid">
+
+
+      <figure class="card media-card">
+
+        <div class="media-label">
+          REAL HARDWARE
+        </div>
+
+        <video
+          src="assets/videos/tag_real.mp4"
+          autoplay
+          loop
+          muted
+          playsinline
+          controls
+          preload="metadata"
+        ></video>
+
+        <figcaption>
+          TAG hardware demo.
+        </figcaption>
+
+      </figure>
+
+
+
+      <figure class="card media-card">
+
+        <div class="media-label">
+          ISAAC SIM
+        </div>
+
+        <img
+          class="animated-demo"
+          src="assets/videos/tag_sim_full_success.gif"
+          alt="Animated TAG simulation demonstration"
+        />
+
+        <figcaption>
+          TAG simulation demo.
+        </figcaption>
+
+      </figure>
+
+
+    </div>
+
+  </section>
+
 </main>
 
+
+
 <footer>
+
   <div class="footer-wrap">
-    <div>
-      <div class="authors">
-        <div>Dr. Thinh Doan - <a href="mailto:thinhdoan@utexas.edu">thinhdoan@utexas.edu</a></div>
-        <div>Trung Bao Truong - <a href="mailto:tbt589@eid.utexas.edu">tbt589@eid.utexas.edu</a></div>
-        <div>Thanh Dat Nguyen - <a href="mailto:tn22833@eid.utexas.edu">tn22833@eid.utexas.edu</a></div>
-        <div>Control, Optimization, and Online Learning (COOL) for Autonomy Lab<br>Department of Aerospace Engineering and Engineering Mechanics</div>
+
+    <div class="authors">
+
+
+      <div>
+        <strong>Contact</strong>
       </div>
+
+
+      <div>
+        Trung Bao Truong -
+        <a href="mailto:tbt589@eid.utexas.edu">
+          tbt589@eid.utexas.edu
+        </a>
       </div>
-    
+
+
+      <div>
+        Thanh Dat Nguyen -
+        <a href="mailto:tn22833@eid.utexas.edu">
+          tn22833@eid.utexas.edu
+        </a>
+      </div>
+
+
+      <div>
+        Dr. Thinh Doan -
+        <a href="mailto:thinhdoan@utexas.edu">
+          thinhdoan@utexas.edu
+        </a>
+      </div>
+
+
+      <div>
+
+        <a
+          href="https://coolautonomylab.github.io/"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Control, Optimization, and Online Learning (COOL) for Autonomy Lab
+        </a>
+
+        <br />
+
+        <a
+          href="https://www.ae.utexas.edu/"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Department of Aerospace Engineering and Engineering Mechanics
+        </a>
+
+      </div>
+
+
+    </div>
+
   </div>
+
 </footer>
+
+
 </body>
+
 </html>
