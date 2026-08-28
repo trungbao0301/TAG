@@ -15,16 +15,17 @@
   <link rel="stylesheet" href="assets/site.css?v=578d31c" />
 
   <style>
+
+    /* =========================
+       HEADER
+    ========================= */
+
     .nav-wrap {
       height: 76px;
     }
 
     .brand {
       line-height: 1.15;
-    }
-
-    .brand .brand-dot {
-      flex: 0 0 auto;
     }
 
     .brand .brand-copy {
@@ -47,7 +48,12 @@
       color: #5f6f82;
     }
 
-    /* Center labels above demo figures */
+
+    /* =========================
+       FIGURES
+    ========================= */
+
+    /* Center REAL HARDWARE / ISAAC SIM */
     .media-label {
       text-align: center;
     }
@@ -57,13 +63,50 @@
       text-align: center;
     }
 
-    /* CyberRunner link */
+
+    /* =========================
+       LINKS
+    ========================= */
+
     .cyberrunner-link {
       color: blue;
       text-decoration: underline;
     }
 
+
+    /* =========================
+       CONTACT
+    ========================= */
+
+    .contact-footer {
+      width: 100%;
+    }
+
+    .contact-title {
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .contact-names {
+      display: flex;
+      gap: 70px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+
+    .contact-org {
+      display: block;
+      width: 100%;
+      line-height: 1.5;
+    }
+
+
+    /* =========================
+       MOBILE
+    ========================= */
+
     @media (max-width: 650px) {
+
       .nav-wrap {
         height: 82px;
       }
@@ -75,19 +118,30 @@
       .brand .brand-copy small {
         font-size: 10px;
       }
+
+      .contact-names {
+        flex-direction: column;
+        gap: 6px;
+      }
     }
+
   </style>
+
 </head>
 
 
 <body>
 
+
+<!-- =========================
+     HEADER
+========================= -->
+
 <header class="topbar">
+
   <div class="nav-wrap">
 
     <a class="brand" href="#top">
-
-      <span class="brand-dot"></span>
 
       <span class="brand-copy">
 
@@ -104,8 +158,14 @@
     </a>
 
   </div>
+
 </header>
 
+
+
+<!-- =========================
+     MAIN CONTENT
+========================= -->
 
 <main id="top">
 
@@ -114,12 +174,20 @@
 
     <div class="section">
 
-      <div class="system-grid" style="align-items:center">
+      <div
+        class="system-grid"
+        style="align-items:center"
+      >
 
+
+        <!-- TEXT -->
 
         <div>
 
-          <p class="lead" style="margin-left:0;margin-right:0">
+          <p
+            class="lead"
+            style="margin-left:0;margin-right:0"
+          >
 
             TAG provides a compact physical platform for studying
 
@@ -144,16 +212,19 @@
           </p>
 
 
-          <p class="lead" style="margin-left:0;margin-right:0">
+          <p
+            class="lead"
+            style="margin-left:0;margin-right:0"
+          >
 
             TAG supports research in model-based and model-free learning,
             system identification, reinforcement learning, adaptive and robust
             control, multi-agent decision-making, and learning under disturbances
             and partial observability.
 
-            More broadly, our goal is to provide a reproducible physical
-            benchmark for developing AI and control algorithms that must learn,
-            predict, and make decisions in the presence of
+            More broadly, our goal is to provide a reproducible physical benchmark
+            for developing AI and control algorithms that must learn, predict,
+            and make decisions in the presence of
 
             <strong>
               physical coupling, dynamic interactions, uncertainty, and
@@ -163,7 +234,10 @@
           </p>
 
 
-          <p class="lead" style="margin-left:0;margin-right:0">
+          <p
+            class="lead"
+            style="margin-left:0;margin-right:0"
+          >
 
             <sup>1</sup>
             The autonomous maze is inspired by
@@ -181,6 +255,9 @@
 
         </div>
 
+
+
+        <!-- HARDWARE IMAGE -->
 
         <figure class="card image-card large overview-photo">
 
@@ -204,7 +281,14 @@
 
 
 
-  <section class="section demos" id="demos">
+  <!-- =========================
+       DEMOS
+  ========================= -->
+
+  <section
+    class="section demos"
+    id="demos"
+  >
 
     <h2>
       Demos
@@ -214,12 +298,13 @@
     <div class="demo-grid">
 
 
+      <!-- REAL HARDWARE -->
+
       <figure class="card media-card">
 
         <div class="media-label">
           REAL HARDWARE
         </div>
-
 
         <video
           src="assets/videos/tag_real.mp4"
@@ -231,7 +316,6 @@
           preload="metadata"
         ></video>
 
-
         <figcaption>
           TAG hardware demo.
         </figcaption>
@@ -240,19 +324,19 @@
 
 
 
+      <!-- ISAAC SIM -->
+
       <figure class="card media-card">
 
         <div class="media-label">
           ISAAC SIM
         </div>
 
-
         <img
           class="animated-demo"
           src="assets/videos/tag_sim_full_success.gif"
           alt="Animated TAG simulation demonstration"
         />
-
 
         <figcaption>
           TAG simulation demo.
@@ -270,23 +354,22 @@
 
 
 
+<!-- =========================
+     FOOTER / CONTACT
+========================= -->
+
 <footer>
 
   <div class="footer-wrap">
 
-    <div class="authors">
+    <div class="contact-footer">
 
 
-      <div>
-        <strong>
-          Contact
-        </strong>
-      </div>
+      <!-- CONTACT -->
 
+      <div class="contact-title">
 
-      <div>
-
-        Trung Bao Truong -
+        Contact -
 
         <a href="mailto:tbt589@eid.utexas.edu">
           tbt589@eid.utexas.edu
@@ -295,29 +378,52 @@
       </div>
 
 
-      <div>
 
-        Thanh Dat Nguyen -
+      <!-- NAMES -->
 
-        <a href="mailto:tn22833@eid.utexas.edu">
-          tn22833@eid.utexas.edu
-        </a>
+      <div class="contact-names">
+
+
+        <div>
+
+          Trung Bao Truong -
+
+          <a href="mailto:tbt589@eid.utexas.edu">
+            tbt589@eid.utexas.edu
+          </a>
+
+        </div>
+
+
+        <div>
+
+          Thanh Dat Nguyen -
+
+          <a href="mailto:tn22833@eid.utexas.edu">
+            tn22833@eid.utexas.edu
+          </a>
+
+        </div>
+
+
+        <div>
+
+          Dr. Thinh Doan -
+
+          <a href="mailto:thinhdoan@utexas.edu">
+            thinhdoan@utexas.edu
+          </a>
+
+        </div>
+
 
       </div>
 
 
-      <div>
 
-        Dr. Thinh Doan -
+      <!-- LAB + DEPARTMENT -->
 
-        <a href="mailto:thinhdoan@utexas.edu">
-          thinhdoan@utexas.edu
-        </a>
-
-      </div>
-
-
-      <div>
+      <div class="contact-org">
 
         <a
           href="https://coolautonomylab.github.io/"
@@ -327,9 +433,7 @@
           Control, Optimization, and Online Learning (COOL) for Autonomy Lab
         </a>
 
-
-        <br />
-
+        <br>
 
         <a
           href="https://www.ae.utexas.edu/"
