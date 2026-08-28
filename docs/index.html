@@ -50,14 +50,19 @@
 
 
     /* =========================
-       MAIN TITLE
+       SECTION TITLES
     ========================= */
 
-    .system-title {
-      margin: 0 0 24px 0;
-      font-size: 32px;
+    /* TAG title and Demos are exactly the same size */
+    .system-title,
+    .demos h2 {
+      font-size: 56px;
       font-weight: 800;
-      line-height: 1.2;
+      line-height: 1.1;
+    }
+
+    .system-title {
+      margin: 0 0 32px 0;
     }
 
 
@@ -65,22 +70,24 @@
        FIGURES
     ========================= */
 
+    /* Center REAL HARDWARE / ISAAC SIM */
     .media-label {
       text-align: center;
     }
 
+    /* Center every figure caption */
     figcaption {
       text-align: center;
     }
 
 
     /* =========================
-       LINKS
+       CYBERRUNNER LINK
     ========================= */
 
     .cyberrunner-link {
       color: blue;
-      text-decoration: underline;
+      text-decoration: none;
     }
 
 
@@ -142,9 +149,15 @@
         font-size: 10px;
       }
 
+      /* Keep both titles the same size on mobile too */
+      .system-title,
+      .demos h2 {
+        font-size: 38px;
+        line-height: 1.1;
+      }
+
       .system-title {
-        font-size: 26px;
-        margin-bottom: 18px;
+        margin-bottom: 22px;
       }
 
       .contact-names {
@@ -196,18 +209,22 @@
 
 
 <!-- =========================
-     MAIN
+     MAIN CONTENT
 ========================= -->
 
 <main id="top">
 
+
+  <!-- =========================
+       SYSTEM
+  ========================= -->
 
   <section class="band" id="system">
 
     <div class="section">
 
 
-      <!-- MAIN TITLE -->
+      <!-- TITLE -->
 
       <h1 class="system-title">
         TAG - Testbed for Autonomous Games
@@ -273,6 +290,8 @@
 
           </p>
 
+
+          <!-- CYBERRUNNER CITATION -->
 
           <p
             class="lead"
@@ -409,7 +428,7 @@
     <div class="contact-footer">
 
 
-      <!-- CONTACT -->
+      <!-- CONTACT TITLE -->
 
       <div class="contact-title">
         Contact
