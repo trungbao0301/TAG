@@ -3,35 +3,42 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="TAG: Testbed for Autonomous Games — Labyrinth with a Top-Mounted Rotary Inverted Pendulum. DreamerV3 maze control, TQC pendulum control, simulation, sim-to-real transfer, and hardware deployment." />
+  <meta name="description" content="TAG: Testbed for Autonomous Games, a compact physical platform for studying learning and control in physically coupled dynamical systems." />
   <title>TAG | Testbed for Autonomous Games</title>
   <link rel="stylesheet" href="assets/site.css?v=578d31c" />
+  <style>
+    .nav-wrap{height:76px}
+    .brand{line-height:1.15}
+    .brand .brand-dot{flex:0 0 auto}
+    .brand .brand-copy{width:auto;height:auto;border-radius:0;background:transparent;display:flex;flex-direction:column;gap:3px}
+    .brand .brand-copy strong{font-size:18px}
+    .brand .brand-copy small{font-size:11px;font-weight:700;color:#5f6f82}
+    @media(max-width:650px){.nav-wrap{height:82px}.brand .brand-copy strong{font-size:15px}.brand .brand-copy small{font-size:10px}}
+  </style>
 </head>
 <body>
 <header class="topbar">
   <div class="nav-wrap">
-    <a class="brand" href="#top"><span></span>TAG</a>
+    <a class="brand" href="#top">
+      <span class="brand-dot"></span>
+      <span class="brand-copy">
+        <strong>TAG - Testbed for Autonomous Games</strong>
+        <small>COOL Autonomy Lab &middot; The University of Texas at Austin</small>
+      </span>
+    </a>
     <nav>
       <a href="#system">System</a>
-      <a href="#simulation">Simulation</a>
-      <a href="#dreamer">DreamerV3</a>
-      <a href="#pendulum">Pendulum</a>
-      <a href="#transfer">Sim-to-Real</a>
-      <a href="#results">Results</a>
+      <a href="#demos">Demos</a>
     </nav>
-    <a class="code-link" href="https://github.com/trungbao0301/TAG" target="_blank" rel="noreferrer">Code ↗</a>
+    <a class="code-link" href="https://github.com/trungbao0301/TAG" target="_blank" rel="noreferrer">Code</a>
   </div>
 </header>
 
 <main id="top">
 <section class="hero section">
-  <div class="eyebrow">COOL Autonomy Lab · The University of Texas at Austin</div>
   <h1>TAG</h1>
   <p class="hero-title">Testbed for Autonomous Games</p>
-  <p class="hero-subtitle">Labyrinth with a Top-Mounted Rotary Inverted Pendulum</p>
   <p class="hero-lede">A real reinforcement-learning testbed that couples a two-axis marble labyrinth with a rotary inverted pendulum, combining vision-based maze control, disturbance-aware learning, physics simulation, and embedded pendulum control.</p>
-  <div class="authors">Trung Bao Truong <span>·</span> Thanh Dat Nguyen</div>
-  <div class="affiliation">Control, Optimization, and Online Learning (COOL) for Autonomy Lab<br>Department of Aerospace Engineering and Engineering Mechanics</div>
   <div class="actions">
     <a class="btn primary" href="assets/paper/TAG_manuscript.pdf" target="_blank">Manuscript PDF</a>
     <a class="btn" href="assets/paper/main.tex" target="_blank">LaTeX Source</a>
@@ -40,163 +47,53 @@
   </div>
 </section>
 
+<section class="band" id="system">
+  <div class="section">
+    <div class="section-label">TAG system overview</div>
+    <h2>A physical benchmark for coupled learning and control.</h2>
+    <div class="system-grid" style="align-items:center">
+      <div>
+        <p class="lead" style="margin-left:0;margin-right:0">TAG provides a compact physical platform for studying <strong>learning and control in physically coupled dynamical systems</strong>. The testbed consists of an autonomous maze board integrated with a rotary inverted pendulum. A dedicated controller actively tilts and steers the maze, while an overhead camera provides visual measurements of the marble's motion. At the same time, the top-mounted rotary inverted pendulum dynamically interacts with the shared platform, injecting reaction torque and vibration that couple the pendulum, board, and marble dynamics. This creates a challenging yet controllable environment in which multiple subsystems interact through shared physical dynamics rather than operating independently.</p>
+        <p class="lead" style="margin-left:0;margin-right:0">TAG supports research in model-based and model-free learning, system identification, reinforcement learning, adaptive and robust control, multi-agent decision-making, and learning under disturbances and partial observability. More broadly, our goal is to provide a reproducible physical benchmark for developing AI and control algorithms that must learn, predict, and make decisions in the presence of <strong>physical coupling, dynamic interactions, uncertainty, and nonstationary environments</strong>.</p>
+        <p class="lead" style="margin-left:0;margin-right:0">The maze side is inspired by <a href="https://github.com/thomasbi1/cyberrunner" target="_blank" rel="noreferrer">CyberRunner</a>.</p>
+      </div>
+      <figure class="card image-card large overview-photo">
+        <img src="assets/images/tag_physical_hardware.png" alt="Physical TAG testbed" />
+        <figcaption>TAG hardware platform.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
 <section class="section demos" id="demos">
   <div class="section-label">TAG in action</div>
   <h2>Real hardware and integrated simulation</h2>
   <div class="demo-grid">
     <figure class="card media-card">
-      <div class="media-label">REAL TAG</div>
+      <div class="media-label">REAL HARDWARE</div>
       <video src="assets/videos/tag_real.mp4" autoplay loop muted playsinline controls preload="metadata"></video>
-      <figcaption>Physical labyrinth demonstration on the TAG platform.</figcaption>
+      <figcaption>TAG hardware demo.</figcaption>
     </figure>
     <figure class="card media-card">
       <div class="media-label">ISAAC SIM</div>
       <img class="animated-demo" src="assets/videos/tag_sim_full_success.gif" alt="Animated TAG simulation demonstration" />
-      <figcaption>Animated simulation demonstration supplied with the project.</figcaption>
+      <figcaption>TAG simulation demo.</figcaption>
     </figure>
-  </div>
-</section>
-
-<section class="band" id="system">
-  <div class="section">
-    <div class="section-label">TAG system overview</div>
-    <h2>One platform, two learning problems, one mechanically coupled structure.</h2>
-    <p class="lead">Two Hiwonder servos tilt the maze, an overhead camera tracks the marble, and a top-mounted rotary inverted pendulum injects reaction torque and vibration into the same board. DreamerV3 selects maze pitch and roll setpoints, while the pendulum is controlled independently and acts as a dynamic disturbance to the marble task.</p>
-    <div class="system-grid">
-      <figure class="card image-card large">
-        <img src="assets/images/tag_physical_hardware.png" alt="Physical TAG testbed" />
-        <figcaption>Physical TAG platform with overhead camera, labyrinth, servo actuation, and top-mounted rotary inverted pendulum.</figcaption>
-      </figure>
-      <div class="stack">
-        <article class="fact"><strong>Maze controller</strong><span>DreamerV3 high-level pitch/roll decision</span></article>
-        <article class="fact"><strong>Pendulum controller</strong><span>TQC continuous motor control</span></article>
-        <article class="fact"><strong>Maze action</strong><span>2-D position setpoints, not velocity control</span></article>
-        <article class="fact"><strong>Communication</strong><span>ROS 2 / TCP between robot and GPU learner</span></article>
-      </div>
-    </div>
-    <div class="flow card">
-      <div>Overhead camera</div><b>→</b><div>Marble detector + state estimator</div><b>→</b><div>ROS 2 / TCP bridge</div><b>⇄</b><div class="accent">DreamerV3 GPU learner</div><b>→</b><div>Hiwonder servo driver</div><b>→</b><div>Two-axis maze</div>
-      <div class="disturbance">Top-mounted RIP → reaction torque + vibration → maze</div>
-    </div>
-  </div>
-</section>
-
-<section class="section maps">
-  <div class="section-label">Geometry and perception</div>
-  <h2>The control state is tied to the physical maze.</h2>
-  <p class="lead">The software geometry, path, holes, walls, board pose, and measured marble motion must share a consistent board coordinate system. The latest observation also includes measured marble velocity because position alone cannot reveal whether the marble is accelerating toward a hole or braking before a corner.</p>
-  <div class="image-grid three">
-    <figure class="card image-card"><img src="assets/images/tag_digital_map.png" alt="Digital TAG maze map" /><figcaption>Digital geometry and numbered reference path.</figcaption></figure>
-    <figure class="card image-card"><img src="assets/images/tag_real_map.png" alt="Real TAG maze camera view" /><figcaption>Real labyrinth from the overhead camera.</figcaption></figure>
-    <figure class="card image-card"><img src="assets/images/tag_live_view.png" alt="Live TAG policy view" /><figcaption>Live observation with marble state and reference path.</figcaption></figure>
-  </div>
-</section>
-
-<section class="band soft" id="simulation">
-  <div class="section">
-    <div class="section-label">Simulation environment</div>
-    <h2>Simulation accelerates experience collection without claiming perfect zero-shot transfer.</h2>
-    <p class="lead">The integrated Isaac Sim model places the labyrinth, marble, tilting board, and top-mounted Furuta pendulum in the same rigid-body environment. Simulation allows continuous rollouts, automatic resets, broader parameter randomization, and early rejection of unsafe policies before they reach hardware. Real data is still required to correct friction, contact, actuator response, vibration, timing, and structural mismatch.</p>
-    <div class="image-grid three">
-      <figure class="card image-card"><div class="media-label">ISAAC SIM</div><img src="assets/images/tag_furuta_isaacsim.png" alt="Integrated TAG Isaac Sim model" /><figcaption>Integrated TAG model with top-mounted Furuta pendulum.</figcaption></figure>
-      <figure class="card image-card"><div class="media-label">POLICY VIEW</div><img src="assets/images/tag_live_view.png" alt="Live policy visualization" /><figcaption>Rendered camera observation and map-based monitoring during execution.</figcaption></figure>
-      <figure class="card image-card"><div class="media-label">MUJOCO</div><img src="assets/images/tag_mujoco_simulation.png" alt="MuJoCo simulation" /><figcaption>MuJoCo supports pendulum control, system identification, and moving-board robustness training.</figcaption></figure>
-    </div>
-  </div>
-</section>
-
-<section class="section" id="dreamer">
-  <div class="section-label">Maze control · DreamerV3</div>
-  <h2>DreamerV3 learns a recurrent world model and chooses board-angle setpoints.</h2>
-  <p class="lead">The high-level maze policy receives a local image together with board angles, marble position, measured velocity, future path points, progress, and optional pendulum/vibration data. It outputs two normalized actions that are mapped to safe pitch and roll setpoints.</p>
-  <div class="network-grid">
-    <article class="card net"><span>01</span><h3>CNN image encoder</h3><p>Compresses local wall, corner, hole, and visual context.</p></article>
-    <article class="card net"><span>02</span><h3>MLP vector encoder</h3><p>Processes angles, position, velocity, path, progress, and optional RIP data.</p></article>
-    <article class="card net"><span>03</span><h3>RSSM world model</h3><p>Maintains recurrent memory for momentum, actuator delay, impacts, and disturbance phase.</p></article>
-    <article class="card net"><span>04</span><h3>Actor + critic</h3><p>Train on imagined latent trajectories so physical replay can support many learning updates.</p></article>
-  </div>
-  <div class="callout"><strong>Why recurrent instead of a Transformer now?</strong> The current task is a compact real-time control loop with short temporal dependencies. The recurrent world model is simpler to run and already captures history-dependent effects; a Transformer remains a future option if longer context becomes necessary.</div>
-</section>
-
-<section class="dark" id="pendulum">
-  <div class="section">
-    <div class="section-label light">Furuta pendulum · TQC</div>
-    <h2>One nonlinear policy for swing-up, capture, balance, and moving-board disturbance rejection.</h2>
-    <p class="lead light-text">The pendulum is underactuated: the rotary arm is driven while the pendulum joint moves freely. TAG uses Truncated Quantile Critics (TQC), a model-free off-policy actor–critic method for continuous actions, instead of separate swing-up and balancing controllers with hand-designed switching logic.</p>
-    <div class="dark-grid">
-      <article><strong>Actor</strong><p>Two hidden layers of 64 ReLU units. A tanh-squashed Gaussian produces a bounded continuous action in [−1, 1].</p></article>
-      <article><strong>Critics</strong><p>Predict quantiles of long-term return and truncate optimistic upper quantiles during target construction.</p></article>
-      <article><strong>Deployment</strong><p>Only the actor is exported after training; critics are discarded for real-time embedded inference.</p></article>
-    </div>
-    <figure class="pendulum-figure card dark-card"><img src="assets/images/pendulum model.png" alt="Furuta pendulum model" /><figcaption>Rotary inverted pendulum model and moving-base coordinates used for simulation and control development.</figcaption></figure>
-  </div>
-</section>
-
-<section class="section" id="transfer">
-  <div class="section-label">Moving board + sim-to-real</div>
-  <h2>Transfer preserves useful behavior while progressively increasing disturbance.</h2>
-  <p class="lead">The pendulum controller treats maze roll and pitch as external disturbances. Training progresses from a pretrained swing-up and balance policy to mild motion, larger roll/pitch excursions, faster two-axis motion, and finally robustness/domain randomization. Actor transfer is combined with critic reset and staged warm-up to reduce catastrophic forgetting.</p>
-  <div class="timeline">
-    <div><span>1</span><strong>Swing-up + balance</strong><small>pretrained stationary/mild-base policy</small></div>
-    <div><span>2</span><strong>Mild board motion</strong><small>retain previously learned behavior</small></div>
-    <div><span>3</span><strong>Larger roll + pitch</strong><small>progressively increase disturbance</small></div>
-    <div><span>4</span><strong>Faster two-axis motion</strong><small>verify rates up to ~120°/s</small></div>
-    <div><span>5</span><strong>Domain randomization</strong><small>delay, dynamics, sensing, actuator mismatch</small></div>
-  </div>
-</section>
-
-<section class="band soft" id="hardware">
-  <div class="section">
-    <div class="section-label">Hardware deployment</div>
-    <h2>The trained TQC actor runs directly on the ESP32.</h2>
-    <p class="lead">The actor is exported from the Python checkpoint into a C-compatible header. On hardware, the controller reads the AS5600 pendulum encoder, AS5048A rotary-arm encoder, and BNO086 board orientation/rates, builds the same normalized observation used in simulation, evaluates the actor, and converts its output to a motor-voltage command.</p>
-    <div class="deploy-flow card"><strong>TQC checkpoint</strong><b>→</b><strong>extract actor</strong><b>→</b><strong>C header</strong><b>→</b><strong>ESP32 firmware</strong><b>→</b><strong>motor command</strong></div>
-    <div class="stats three-stats">
-      <div><strong>~200 Hz</strong><span>embedded control frequency</span></div>
-      <div><strong>~5 ms</strong><span>control period</span></div>
-      <div><strong>12-D</strong><span>pendulum deployment observation</span></div>
-    </div>
-  </div>
-</section>
-
-<section class="section" id="results">
-  <div class="section-label">Experimental results</div>
-  <h2>Preliminary maze learning and robust pendulum simulation results.</h2>
-  <p class="lead">The manuscript intentionally separates preliminary maze curves from stronger pendulum verification results. The maze plots come from one baseline run and are not presented as final performance claims.</p>
-  <div class="stats results-stats">
-    <div><strong>4,240,020</strong><span>maze environment steps shown</span></div>
-    <div><strong>0.3792</strong><span>smoothed maze success value at the shown step</span></div>
-    <div><strong>~96%</strong><span>pendulum sustained success at the hardest reported simulated condition</span></div>
-    <div><strong>±15°</strong><span>simultaneous roll / pitch verification range</span></div>
-    <div><strong>~120°/s</strong><span>maximum reported board rate in final verification</span></div>
-    <div><strong>10 V</strong><span>selected maximum motor command</span></div>
-  </div>
-  <div class="image-grid three plots">
-    <figure class="card image-card"><img src="assets/images/tag_success_rate.png" alt="TAG success-rate plot" /><figcaption>Success rate over 100 episodes.</figcaption></figure>
-    <figure class="card image-card"><img src="assets/images/tag_episode_duration.png" alt="TAG episode-duration plot" /><figcaption>Episode duration during the baseline run.</figcaption></figure>
-    <figure class="card image-card"><img src="assets/images/tag_log_reward.png" alt="TAG cumulative log reward plot" /><figcaption>Cumulative log reward from the same run.</figcaption></figure>
-  </div>
-  <div class="callout warning"><strong>Maze-result caution.</strong> Only one long baseline run is shown. Final evaluation should use repeated runs, fixed starting positions, and report success rate, completion time, maximum progress, hole rate, and physical training steps.</div>
-</section>
-
-<section class="dark future">
-  <div class="section">
-    <div class="section-label light">Generalization + future work</div>
-    <h2>From one board to reusable skills across maze configurations.</h2>
-    <p class="lead light-text">The next research direction is a map-conditioned controller that learns reusable acceleration, braking, turning, recovery, hole-approach, and wall-contact skills across simulated mazes, then adapts with a smaller amount of real replay. Planned comparisons include measured-velocity input, physics hints, residual dynamics, MuJoCo pretraining, and hybrid skill pretraining.</p>
-    <div class="dark-grid future-grid">
-      <article><strong>Physics-guided prediction</strong><p>Use a simple ball-on-plate model for the easy dynamics and a learned residual for friction, impacts, delay, vibration, and unmodeled effects.</p></article>
-      <article><strong>Multi-map training</strong><p>Condition one policy on local imagery and future path geometry rather than a fixed map identity.</p></article>
-      <article><strong>Coupled controller study</strong><p>Compare pendulum-disabled and pendulum-active conditions and test whether disturbance-aware observations or coupled training improve maze performance.</p></article>
-    </div>
   </div>
 </section>
 </main>
 
 <footer>
   <div class="footer-wrap">
-    <div><strong>TAG</strong> · COOL Autonomy Lab · UT Austin</div>
-    <div><a href="assets/paper/TAG_manuscript.pdf" target="_blank">Paper</a><a href="https://github.com/trungbao0301/TAG" target="_blank" rel="noreferrer">Code</a><a href="#top">Back to top ↑</a></div>
+    <div>
+      <div class="authors">
+        <div>Dr. Thinh Doan - <a href="mailto:thinhdoan@utexas.edu">thinhdoan@utexas.edu</a></div>
+        <div>Trung Bao Truong - <a href="mailto:tbt589@eid.utexas.edu">tbt589@eid.utexas.edu</a></div>
+        <div>Thanh Dat Nguyen - <a href="mailto:tn22833@eid.utexas.edu">tn22833@eid.utexas.edu</a></div>
+      </div>
+      <div class="affiliation">Control, Optimization, and Online Learning (COOL) for Autonomy Lab<br>Department of Aerospace Engineering and Engineering Mechanics</div>
+    </div>
+    <div><a href="assets/paper/TAG_manuscript.pdf" target="_blank">Paper</a><a href="https://github.com/trungbao0301/TAG" target="_blank" rel="noreferrer">Code</a><a href="#top">Back to top</a></div>
   </div>
 </footer>
 </body>
